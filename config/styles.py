@@ -66,6 +66,41 @@ input,select,textarea{font-size:16px !important}
     [data-testid="stSidebar"]{min-width:100vw !important;max-width:100vw !important}
 }
 
+[data-testid="stSidebarNav"] a[aria-current="page"]{
+    background:linear-gradient(90deg,rgba(0,212,170,0.15),transparent) !important;
+    border-left:3px solid #00D4AA !important;
+    font-weight:600 !important;
+}
+[data-testid="stSidebarNav"] a{
+    padding:0.4rem 0.8rem !important;border-radius:4px;transition:background 0.2s;
+    border-left:3px solid transparent !important;
+}
+[data-testid="stSidebarNav"] a:hover{background:rgba(0,212,170,0.08) !important}
+
+@keyframes skeleton-pulse{
+    0%{background-position:-200px 0}
+    100%{background-position:calc(200px + 100%) 0}
+}
+.skeleton-loader{
+    background:linear-gradient(90deg,rgba(26,31,46,1) 25%,rgba(45,55,72,1) 50%,rgba(26,31,46,1) 75%);
+    background-size:200px 100%;
+    animation:skeleton-pulse 1.5s ease-in-out infinite;
+    border-radius:8px;height:80px;margin:0.5rem 0;
+}
+
+@keyframes toast-in{0%{transform:translateX(100%);opacity:0}100%{transform:translateX(0);opacity:1}}
+@keyframes toast-out{0%{opacity:1}100%{opacity:0;transform:translateY(-20px)}}
+.archon-toast{
+    position:fixed;top:1rem;right:1rem;z-index:99999;
+    padding:0.8rem 1.2rem;border-radius:8px;
+    font-size:0.9rem;font-weight:500;
+    animation:toast-in 0.3s ease-out,toast-out 0.3s ease-in 2.7s forwards;
+    box-shadow:0 4px 12px rgba(0,0,0,0.3);pointer-events:none;
+}
+.archon-toast.success{background:rgba(0,212,170,0.95);color:black}
+.archon-toast.error{background:rgba(212,80,80,0.95);color:white}
+.archon-toast.info{background:rgba(66,133,244,0.95);color:white}
+
 @media(hover:none) and (pointer:coarse){
     .stButton>button{min-height:3rem;padding:0.6rem 1rem}
     .stSelectbox>div>div{min-height:2.8rem}
@@ -81,3 +116,15 @@ input,select,textarea{font-size:16px !important}
 def inject_pro_css():
     st.markdown(_PWA_META, unsafe_allow_html=True)
     st.markdown(_PRO_CSS, unsafe_allow_html=True)
+
+
+def show_toast(message: str, toast_type: str = "success"):
+    st.markdown(
+        f'<div class="archon-toast {toast_type}">{message}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def show_skeleton(count: int = 3):
+    for _ in range(count):
+        st.markdown('<div class="skeleton-loader"></div>', unsafe_allow_html=True)

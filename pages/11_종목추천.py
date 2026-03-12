@@ -118,6 +118,68 @@ if "recommend_result" in st.session_state:
 
     st.markdown("---")
 
+    st.subheader("📊 종합 점수 시각화")
+
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    top_10 = df.head(10)
+
+    fig_bar = go.Figure()
+    colors = [
+        "#00D4AA" if v >= 15 else ("#00A080" if v >= 0 else ("#D45050" if v >= -15 else "#FF2020"))
+        for v in top_10["종합점수"]
+    ]
+    fig_bar.add_trace(go.Bar(
+        x=top_10["종목명"], y=top_10["종합점수"],
+        marker_color=colors,
+        text=[f"{v:+.1f}" for v in top_10["종합점수"]],
+        textposition="outside",
+    ))
+    fig_bar.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        title="Top 10 종합 점수",
+        yaxis_title="점수",
+        height=400,
+        margin=dict(t=40, b=40),
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+    if len(top_10) >= 1:
+        st.subheader("🕸️ 팩터 레이더 차트")
+        radar_pick = st.selectbox("종목 선택", top_10["종목명"].tolist(), key="radar_pick")
+        row_data = df[df["종목명"] == radar_pick].iloc[0]
+
+        categories = ["기술점수", "모멘텀", "거래량", "추세일관성"]
+        values = [float(row_data[c]) for c in categories]
+        max_abs = max(abs(v) for v in values) if values else 1
+        norm = [((v + max_abs) / (2 * max_abs)) * 100 for v in values]
+        norm.append(norm[0])
+        categories.append(categories[0])
+
+        fig_radar = go.Figure()
+        fig_radar.add_trace(go.Scatterpolar(
+            r=norm, theta=categories, fill="toself",
+            fillcolor="rgba(0,212,170,0.2)", line_color="#00D4AA",
+            name=radar_pick,
+        ))
+        fig_radar.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            polar=dict(
+                bgcolor="rgba(0,0,0,0)",
+                radialaxis=dict(visible=True, range=[0, 100], showticklabels=False),
+            ),
+            title=f"{radar_pick} 팩터 분석",
+            height=400, margin=dict(t=40, b=40),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+
+    st.markdown("---")
+
     st.subheader("📈 세부 점수 분석")
 
     detail_cols = ["종목명", "기술점수", "모멘텀", "거래량", "추세일관성", "종합점수", "추천"]

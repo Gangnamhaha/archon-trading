@@ -189,9 +189,20 @@ if "ta_ticker" in st.session_state:
             showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             template="plotly_dark",
+            hovermode="x unified",
+            xaxis=dict(
+                showspikes=True, spikemode="across", spikesnap="cursor",
+                spikethickness=1, spikecolor="#00D4AA", spikedash="dot",
+            ),
+            yaxis=dict(
+                showspikes=True, spikemode="across", spikesnap="cursor",
+                spikethickness=1, spikecolor="#00D4AA", spikedash="dot",
+            ),
+            dragmode="zoom",
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        config = {"scrollZoom": True, "displayModeBar": True, "modeBarButtonsToAdd": ["drawline", "eraseshape"]}
+        st.plotly_chart(fig, use_container_width=True, config=config)
 
         # 지표 수치 테이블
         with st.expander("현재 지표 수치"):

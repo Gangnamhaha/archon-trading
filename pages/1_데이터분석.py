@@ -95,8 +95,20 @@ if "data_ticker" in st.session_state:
             showlegend=False,
             title=f"{ticker} 주가 차트",
             template="plotly_dark",
+            hovermode="x unified",
+            xaxis=dict(
+                showspikes=True, spikemode="across", spikesnap="cursor",
+                spikethickness=1, spikecolor="#00D4AA", spikedash="dot",
+            ),
+            yaxis=dict(
+                showspikes=True, spikemode="across", spikesnap="cursor",
+                spikethickness=1, spikecolor="#00D4AA", spikedash="dot",
+            ),
+            dragmode="zoom",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_xaxes(showspikes=True, row=2, col=1)
+        config = {"scrollZoom": True, "displayModeBar": True, "modeBarButtonsToAdd": ["drawline", "eraseshape"]}
+        st.plotly_chart(fig, use_container_width=True, config=config)
 
         # 일별 수익률 분포
         st.subheader("일별 수익률 분포")

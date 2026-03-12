@@ -49,8 +49,52 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            market TEXT NOT NULL DEFAULT 'KR',
+            name TEXT,
+            username TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(ticker, username)
+        )
+    """)
+
     conn.commit()
     conn.close()
+
+
+# === 워치리스트 ===
+
+def add_watchlist(ticker: str, market: str, name: str, username: str):
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO watchlist (ticker, market, name, username) VALUES (?, ?, ?, ?)",
+            (ticker, market, name, username)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def remove_watchlist(ticker: str, username: str):
+    conn = get_connection()
+    conn.execute("DELETE FROM watchlist WHERE ticker = ? AND username = ?", (ticker, username))
+    conn.commit()
+    conn.close()
+
+
+def get_watchlist(username: str) -> pd.DataFrame:
+    init_db()
+    conn = get_connection()
+    df = pd.read_sql_query(
+        "SELECT * FROM watchlist WHERE username = ? ORDER BY created_at DESC", conn, params=(username,)
+    )
+    conn.close()
+    return df
 
 
 # === 포트폴리오 CRUD ===
