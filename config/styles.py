@@ -44,7 +44,10 @@ input,select,textarea{font-size:16px !important}
     div[data-testid="stSidebarNav"]{padding-top:1rem}
     .feature-grid{grid-template-columns:1fr !important}
     .main-header h1{font-size:1.3rem !important}
-    [data-testid="stSidebar"]{min-width:85vw !important;max-width:85vw !important}
+    section[data-testid="stMain"]{margin-left:0 !important;width:100% !important}
+    [data-testid="stSidebar"]{position:fixed !important;top:0 !important;left:0 !important;height:100vh !important;z-index:999999 !important;transition:transform 0.3s ease !important}
+    [data-testid="stSidebar"][aria-expanded="true"]{min-width:85vw !important;max-width:85vw !important;transform:translateX(0) !important;box-shadow:4px 0 20px rgba(0,0,0,0.5) !important}
+    [data-testid="stSidebar"][aria-expanded="false"]{min-width:0 !important;max-width:0 !important;transform:translateX(-100%) !important;overflow:hidden !important;box-shadow:none !important}
     [data-testid="stSidebar"] .block-container{padding:0.5rem !important}
 }
 
@@ -63,7 +66,7 @@ input,select,textarea{font-size:16px !important}
     h1{font-size:1.2rem !important}
     .stButton>button{min-height:3rem;font-size:1.05rem}
     .stSelectbox>div>div,.stTextInput>div>div,.stNumberInput>div>div{min-height:2.5rem}
-    [data-testid="stSidebar"]{min-width:100vw !important;max-width:100vw !important}
+    [data-testid="stSidebar"][aria-expanded="true"]{min-width:100vw !important;max-width:100vw !important}
 }
 
 [data-testid="stSidebarNav"] a[aria-current="page"]{
