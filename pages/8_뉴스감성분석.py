@@ -7,8 +7,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 from data.news import fetch_and_analyze, get_market_sentiment, NEWS_SOURCES
 from config.styles import inject_pro_css
+from config.auth import require_auth
 
 st.set_page_config(page_title="News Sentiment", page_icon="", layout="wide")
+require_auth()
 inject_pro_css()
 st.title("News & Sentiment Analysis")
 

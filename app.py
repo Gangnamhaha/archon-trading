@@ -3,6 +3,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
+from config.auth import require_auth, logout
 
 st.set_page_config(
     page_title="Archon - Trading Terminal",
@@ -10,6 +11,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+user = require_auth()
 
 CUSTOM_CSS = """
 <style>
@@ -76,7 +79,7 @@ st.markdown("""
 <div class="main-header">
     <h1 style="color: #00D4AA; margin: 0;">Archon Trading Terminal</h1>
     <p style="color: #A0AEC0; margin: 0.3rem 0 0 0;">
-        AI-Powered Stock Analysis & Trading Platform
+        AI 주식자동매매플랫폼
         <span class="pro-badge">PRO</span>
     </p>
 </div>
@@ -123,6 +126,10 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+st.sidebar.markdown(f"**{user['username']}** ({user['role']})")
+if st.sidebar.button("Logout", use_container_width=True):
+    logout()
+st.sidebar.markdown("---")
 st.sidebar.markdown("### Navigation")
 st.sidebar.info(
     "KR: KRX (KOSPI/KOSDAQ)\n\n"

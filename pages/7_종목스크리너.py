@@ -5,8 +5,10 @@ import streamlit as st
 import pandas as pd
 from data.screener import get_krx_market_data, screen_stocks, PRESETS
 from config.styles import inject_pro_css
+from config.auth import require_auth
 
 st.set_page_config(page_title="Stock Screener", page_icon="", layout="wide")
+require_auth()
 inject_pro_css()
 st.title("Stock Screener")
 

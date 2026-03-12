@@ -1,8 +1,3 @@
-"""
-자동매매 봇 페이지
-- 한국투자증권 KIS API 연동
-- 전략 기반 자동 주문
-"""
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -11,73 +6,107 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from trading.kis_api import KISApi
+from trading.kiwoom_api import KiwoomApi
+from trading.nh_api import NHApi
 from trading.strategy import AVAILABLE_STRATEGIES
 from data.fetcher import fetch_kr_stock
 from data.database import add_trade, get_trades
 from config.styles import inject_pro_css
+from config.auth import require_auth
 
 st.set_page_config(page_title="자동매매", page_icon="🤖", layout="wide")
+require_auth()
 inject_pro_css()
 st.title("🤖 자동매매 봇")
 
 st.warning(
-    "이 기능은 한국투자증권 KIS Open API를 통해 **실제 주식을 매매**합니다. "
+    "이 기능은 증권사 API를 통해 **실제 주식을 매매**합니다. "
     "잘못된 설정으로 인한 손실에 대해 개발자는 책임지지 않습니다. "
     "반드시 **모의투자**로 먼저 테스트하세요."
 )
 
-# === KIS API 설정 ===
 st.subheader("API 연결 설정")
 
-# 세션 상태 초기화
-if "kis_api" not in st.session_state:
-    st.session_state["kis_api"] = None
+if "broker_api" not in st.session_state:
+    st.session_state["broker_api"] = None
+if "broker_name" not in st.session_state:
+    st.session_state["broker_name"] = None
 if "auto_trading" not in st.session_state:
     st.session_state["auto_trading"] = False
 if "trade_log" not in st.session_state:
     st.session_state["trade_log"] = []
 
-with st.expander("KIS API 키 설정", expanded=True):
-    col1, col2 = st.columns(2)
-    with col1:
-        app_key = st.text_input("App Key", type="password", help="한국투자증권에서 발급받은 App Key")
-        account_no = st.text_input("계좌번호", help="계좌번호 (예: 5012345601)")
-    with col2:
-        app_secret = st.text_input("App Secret", type="password", help="한국투자증권에서 발급받은 App Secret")
-        trading_mode = st.selectbox("거래 모드", ["모의투자", "실전투자"])
+BROKER_OPTIONS = {
+    "한국투자증권 (KIS)": "KIS",
+    "키움증권": "KIWOOM",
+    "NH투자증권": "NH",
+}
 
-    base_url = (
-        "https://openapivts.koreainvestment.com:29443"
-        if trading_mode == "모의투자"
-        else "https://openapi.koreainvestment.com:9443"
-    )
+with st.expander("증권사 API 설정", expanded=True):
+    broker_label = st.selectbox("증권사 선택", list(BROKER_OPTIONS.keys()))
+    broker_code = BROKER_OPTIONS[broker_label]
 
-    if st.button("API 연결", type="primary"):
-        if app_key and app_secret and account_no:
-            try:
-                api = KISApi(app_key, app_secret, account_no, base_url)
-                api.get_access_token()
-                st.session_state["kis_api"] = api
-                st.success(f"API 연결 성공! (모드: {trading_mode})")
-            except Exception as e:
-                st.error(f"연결 실패: {e}")
+    if broker_code == "NH":
+        st.error(
+            "⚠️ NH투자증권은 REST API를 제공하지 않습니다. "
+            "QV Open API (Windows COM)만 지원되어 웹 환경에서는 사용할 수 없습니다."
+        )
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            app_key = st.text_input("App Key", type="password", key="broker_app_key")
+            account_no = st.text_input("계좌번호", key="broker_account")
+        with col2:
+            app_secret = st.text_input(
+                "Secret Key" if broker_code == "KIWOOM" else "App Secret",
+                type="password",
+                key="broker_secret",
+            )
+            trading_mode = st.selectbox("거래 모드", ["모의투자", "실전투자"])
+
+        if broker_code == "KIS":
+            base_url = (
+                "https://openapivts.koreainvestment.com:29443"
+                if trading_mode == "모의투자"
+                else "https://openapi.koreainvestment.com:9443"
+            )
         else:
-            st.error("모든 필드를 입력하세요.")
+            base_url = (
+                "https://mockapi.kiwoom.com"
+                if trading_mode == "모의투자"
+                else "https://api.kiwoom.com"
+            )
+
+        if st.button("API 연결", type="primary"):
+            if app_key and app_secret and account_no:
+                try:
+                    if broker_code == "KIS":
+                        api = KISApi(app_key, app_secret, account_no, base_url)
+                    else:
+                        api = KiwoomApi(app_key, app_secret, account_no, base_url)
+                    api.get_access_token()
+                    st.session_state["broker_api"] = api
+                    st.session_state["broker_name"] = broker_label
+                    st.success(f"{broker_label} API 연결 성공! (모드: {trading_mode})")
+                except Exception as e:
+                    st.error(f"연결 실패: {e}")
+            else:
+                st.error("모든 필드를 입력하세요.")
 
 st.markdown("---")
 
-# === API 상태 표시 ===
-api = st.session_state.get("kis_api")
+api = st.session_state.get("broker_api")
+connected_broker = st.session_state.get("broker_name", "")
+
 if api:
     status = api.get_status()
     col1, col2, col3 = st.columns(3)
     col1.metric("연결 상태", "연결됨" if status["has_token"] else "미연결")
-    col2.metric("거래 모드", trading_mode)
+    col2.metric("증권사", connected_broker)
     col3.metric("계좌", status["account"])
 
     st.markdown("---")
 
-    # === 잔고 조회 ===
     st.subheader("잔고 조회")
     if st.button("잔고 새로고침"):
         with st.spinner("잔고 조회 중..."):
@@ -99,7 +128,6 @@ if api:
 
     st.markdown("---")
 
-    # === 수동 주문 ===
     st.subheader("수동 주문")
     col1, col2 = st.columns(2)
 
@@ -139,7 +167,6 @@ if api:
 
     st.markdown("---")
 
-    # === 전략 기반 자동매매 ===
     st.subheader("전략 기반 자동매매")
 
     col1, col2 = st.columns(2)
@@ -154,7 +181,6 @@ if api:
         strategy_instance = strategy_class()
         st.json(strategy_instance.params)
 
-    # 현재 시그널 확인
     if st.button("현재 시그널 확인", use_container_width=True):
         with st.spinner("시그널 분석 중..."):
             df = fetch_kr_stock(auto_ticker, period="3mo")
@@ -258,7 +284,6 @@ if api:
     else:
         st.info("거래 로그가 없습니다.")
 
-    # 거래 이력 (DB)
     with st.expander("전체 거래 이력 (DB)"):
         trades_df = get_trades(limit=50)
         if not trades_df.empty:
@@ -267,13 +292,21 @@ if api:
             st.info("거래 이력이 없습니다.")
 
 else:
-    st.info("위에서 KIS API 키를 입력하고 연결하세요.")
+    st.info("위에서 증권사를 선택하고 API 키를 입력한 뒤 연결하세요.")
     st.markdown("""
-    ### KIS API 키 발급 방법
-    1. [한국투자증권](https://securities.koreainvestment.com) 접속
-    2. 계좌 개설 후 Open API 신청
-    3. API Key / Secret 발급
-    4. 모의투자 계좌 개설 (테스트용)
+    ### 증권사별 API 안내
 
-    자세한 내용은 [KIS Developers](https://apiportal.koreainvestment.com) 를 참조하세요.
+    **한국투자증권 (KIS)**
+    1. [한국투자증권](https://securities.koreainvestment.com) 접속
+    2. 계좌 개설 후 Open API 신청 → [KIS Developers](https://apiportal.koreainvestment.com)
+    3. App Key / Secret 발급, 모의투자 계좌 개설
+
+    **키움증권**
+    1. [키움증권](https://www.kiwoom.com) 접속
+    2. 계좌 개설 후 Open API 신청 → [키움 Open API](https://api.kiwoom.com)
+    3. App Key / Secret Key 발급
+
+    **NH투자증권**
+    - REST API 미지원 (QV Open API: Windows COM 전용)
+    - 웹 환경에서는 사용할 수 없습니다.
     """)

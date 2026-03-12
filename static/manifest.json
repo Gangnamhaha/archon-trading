@@ -1,0 +1,22 @@
+{
+  "name": "Archon Trading Terminal",
+  "short_name": "Archon",
+  "description": "AI-Powered Stock Analysis & Trading Platform",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0E1117",
+  "theme_color": "#00D4AA",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

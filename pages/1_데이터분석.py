@@ -13,8 +13,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from data.fetcher import fetch_stock, get_us_popular_stocks
 from config.styles import inject_pro_css
+from config.auth import require_auth
 
 st.set_page_config(page_title="데이터 분석", page_icon="📈", layout="wide")
+require_auth()
 inject_pro_css()
 st.title("📈 주가 데이터 분석")
 

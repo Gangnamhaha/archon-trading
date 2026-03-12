@@ -12,8 +12,10 @@ from plotly.subplots import make_subplots
 from data.fetcher import fetch_stock
 from analysis.technical import calc_all_indicators, get_signal_summary
 from config.styles import inject_pro_css
+from config.auth import require_auth
 
 st.set_page_config(page_title="기술적 분석", page_icon="📊", layout="wide")
+require_auth()
 inject_pro_css()
 st.title("📊 기술적 분석")
 

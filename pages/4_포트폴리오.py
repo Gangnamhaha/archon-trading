@@ -15,8 +15,10 @@ from data.database import add_stock, remove_stock, get_portfolio
 from data.fetcher import fetch_stock
 from portfolio.tracker import PortfolioTracker
 from config.styles import inject_pro_css
+from config.auth import require_auth
 
 st.set_page_config(page_title="포트폴리오", page_icon="💼", layout="wide")
+require_auth()
 inject_pro_css()
 st.title("💼 포트폴리오 트래커")
 

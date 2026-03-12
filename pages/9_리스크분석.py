@@ -10,8 +10,10 @@ from data.fetcher import fetch_stock
 from analysis.risk import calc_risk_metrics, calc_var, calc_beta_alpha, calc_efficient_frontier
 from analysis.monte_carlo import run_monte_carlo
 from config.styles import inject_pro_css
+from config.auth import require_auth
 
 st.set_page_config(page_title="Risk Analysis", page_icon="", layout="wide")
+require_auth()
 inject_pro_css()
 st.title("Risk Analysis & Monte Carlo")
 
