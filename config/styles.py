@@ -119,15 +119,14 @@ input,select,textarea{font-size:16px !important}
 _HIDE_ADMIN_UI = """<style>
 .stDeployButton,
 [data-testid="manage-app-button"],
-[data-testid="stToolbar"] a[href*="github"],
-[data-testid="stToolbarActions"] a[href*="github"],
-header [data-testid="stToolbarActions"] > div:has(a[href*="github"]),
-[data-testid="stToolbarActions"] button[kind="header"],
 .viewerBadge_container__r5tak,
-#MainMenu {visibility: hidden}
-.stDeployButton,
-[data-testid="manage-app-button"] {
+[data-testid="stToolbar"],
+header[data-testid="stHeader"] [data-testid="stToolbar"],
+#MainMenu {
     display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    overflow: hidden !important;
 }
 </style>"""
 
