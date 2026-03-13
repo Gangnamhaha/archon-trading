@@ -127,10 +127,11 @@ _HIDE_ADMIN_UI = """<style>
 </style>"""
 
 
-def inject_pro_css():
+def inject_pro_css(hide_toolbar: bool = True):
     st.markdown(_PWA_META, unsafe_allow_html=True)
     st.markdown(_PRO_CSS, unsafe_allow_html=True)
-    st.markdown(_HIDE_ADMIN_UI, unsafe_allow_html=True)
+    if hide_toolbar:
+        st.markdown(_HIDE_ADMIN_UI, unsafe_allow_html=True)
 
 
 def show_toast(message: str, toast_type: str = "success"):

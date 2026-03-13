@@ -9,7 +9,7 @@ from data.database import get_trades, get_portfolio
 
 st.set_page_config(page_title="Admin", page_icon="", layout="wide")
 user = require_auth()
-inject_pro_css()
+inject_pro_css(hide_toolbar=False)
 
 if not is_admin():
     st.error("관리자 권한이 필요합니다.")
