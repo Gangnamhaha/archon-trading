@@ -36,10 +36,16 @@ sma_filter = st.sidebar.selectbox("SMA 5/20 Trend", ["All", "Uptrend", "Downtren
 if _user_is_pro:
     vol_ratio_min = st.sidebar.slider("Min Volume Ratio", 0.0, 10.0, 0.0, 0.5)
     return_1d_range = st.sidebar.slider("1-Day Return Range (%)", -30.0, 30.0, (-10.0, 10.0))
+    st.sidebar.markdown("---")
+    st.sidebar.header("배당주 필터")
+    div_filter = st.sidebar.checkbox("배당주만 표시", value=False, key="div_filter")
+    min_div_yield = st.sidebar.slider("최소 배당수익률 (%)", 0.0, 10.0, 2.0, 0.5, key="min_div") if div_filter else 0.0
 else:
     vol_ratio_min = 0.0
     return_1d_range = (-10.0, 10.0)
-    st.sidebar.caption("🔒 Volume Ratio, Return Range 필터는 Pro 전용입니다.")
+    div_filter = False
+    min_div_yield = 0.0
+    st.sidebar.caption("🔒 Volume Ratio, Return Range, 배당 필터는 Pro 전용입니다.")
 
 if st.sidebar.button("Run Screener", type="primary", use_container_width=True):
     with st.spinner(f"Scanning {market} top {top_n} stocks..."):
@@ -72,6 +78,29 @@ if st.sidebar.button("Run Screener", type="primary", use_container_width=True):
                 filters["vol_ratio_min"] = vol_ratio_min
 
         filtered = screen_stocks(raw_data, filters)
+
+        if div_filter and not filtered.empty:
+            from pykrx import stock as krx
+            from datetime import datetime as _dt, timedelta
+            try:
+                year = str(_dt.now().year - 1)
+                div_data = krx.get_market_ohlcv_by_ticker(
+                    (_dt.now() - timedelta(days=1)).strftime("%Y%m%d"), market=market
+                )
+                if not div_data.empty:
+                    div_yields = {}
+                    for t in filtered.index if filtered.index.name else filtered["ticker"] if "ticker" in filtered.columns else []:
+                        try:
+                            div_info = krx.get_market_trading_value_and_volume(year + "0101", year + "1231", t)
+                            if hasattr(div_info, "배당수익률") and len(div_info) > 0:
+                                div_yields[t] = float(div_info["배당수익률"].iloc[-1])
+                        except Exception:
+                            div_yields[t] = 0.0
+                    if div_yields:
+                        filtered["배당수익률(%)"] = filtered.index.map(lambda x: div_yields.get(x, 0.0))
+                        filtered = filtered[filtered["배당수익률(%)"] >= min_div_yield]
+            except Exception:
+                st.caption("배당 데이터 조회 실패 — 배당 필터 미적용")
 
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Scanned", len(raw_data))

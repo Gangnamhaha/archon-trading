@@ -169,17 +169,33 @@ if api:
 
     st.subheader("전략 기반 자동매매")
 
+    trade_mode = st.radio("매매 모드", ["전략 기반", "적립식 매수 (DCA)"], horizontal=True, key="trade_mode")
+
     col1, col2 = st.columns(2)
     with col1:
         auto_ticker = st.text_input("감시 종목코드", value="005930", key="auto_ticker")
-        strategy_name = st.selectbox("매매 전략", list(AVAILABLE_STRATEGIES.keys()))
+        if trade_mode == "전략 기반":
+            strategy_name = st.selectbox("매매 전략", list(AVAILABLE_STRATEGIES.keys()))
         auto_qty = st.number_input("1회 매매 수량", min_value=1, value=1, key="auto_qty")
 
     with col2:
-        st.markdown("**전략 설명**")
-        strategy_class = AVAILABLE_STRATEGIES[strategy_name]
-        strategy_instance = strategy_class()
-        st.json(strategy_instance.params)
+        if trade_mode == "전략 기반":
+            strategy_class = AVAILABLE_STRATEGIES[strategy_name]
+            strategy_instance = strategy_class()
+            st.json(strategy_instance.params)
+        else:
+            st.markdown("**DCA 설정**")
+            st.caption("정해진 간격으로 동일 금액/수량을 자동 매수하여 평균 매입단가를 낮춥니다.")
+
+    st.markdown("##### 리스크 관리")
+    risk_col1, risk_col2, risk_col3 = st.columns(3)
+    with risk_col1:
+        stop_loss_pct = st.number_input("손절 (%) — 0=미사용", min_value=0.0, max_value=50.0, value=0.0, step=0.5, key="stop_loss")
+    with risk_col2:
+        take_profit_pct = st.number_input("익절 (%) — 0=미사용", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key="take_profit")
+    with risk_col3:
+        trailing_stop = st.checkbox("트레일링 스탑", value=False, key="trailing_stop",
+                                     help="최고점 대비 손절% 하락 시 자동 매도")
 
     if st.button("현재 시그널 확인", use_container_width=True):
         with st.spinner("시그널 분석 중..."):
@@ -250,24 +266,63 @@ if api:
 
             df = fetch_kr_stock(auto_ticker, period="3mo")
             if not df.empty:
-                strategy = strategy_class()
-                signal = strategy.get_signal(df)
                 now_str = datetime.now().strftime("%H:%M:%S")
+                current_price = float(df["Close"].iloc[-1])
 
-                if signal == "BUY":
-                    result = api.buy_order(auto_ticker, auto_qty, 0)
-                    log_msg = f"[{now_str}] AUTO BUY: {auto_ticker} x {auto_qty} → {result.get('status', 'unknown')}"
-                    st.session_state["trade_log"].append(log_msg)
-                    if result.get("status") == "success":
-                        add_trade(auto_ticker, "KR", "BUY", 0, auto_qty, f"스케줄러 매수 ({strategy.name})")
-                elif signal == "SELL":
+                sl_triggered = False
+                tp_triggered = False
+                if stop_loss_pct > 0 or take_profit_pct > 0:
+                    buy_avg = st.session_state.get("auto_buy_avg", 0)
+                    peak_price = st.session_state.get("auto_peak_price", current_price)
+                    if current_price > peak_price:
+                        st.session_state["auto_peak_price"] = current_price
+                        peak_price = current_price
+                    if buy_avg > 0:
+                        pnl_pct = (current_price / buy_avg - 1) * 100
+                        if stop_loss_pct > 0:
+                            ref = peak_price if trailing_stop else buy_avg
+                            loss = (current_price / ref - 1) * 100
+                            if loss <= -stop_loss_pct:
+                                sl_triggered = True
+                        if take_profit_pct > 0 and pnl_pct >= take_profit_pct:
+                            tp_triggered = True
+
+                if sl_triggered or tp_triggered:
+                    reason = "손절" if sl_triggered else "익절"
                     result = api.sell_order(auto_ticker, auto_qty, 0)
-                    log_msg = f"[{now_str}] AUTO SELL: {auto_ticker} x {auto_qty} → {result.get('status', 'unknown')}"
+                    log_msg = f"[{now_str}] AUTO {reason}: {auto_ticker} x {auto_qty} → {result.get('status', 'unknown')}"
                     st.session_state["trade_log"].append(log_msg)
                     if result.get("status") == "success":
-                        add_trade(auto_ticker, "KR", "SELL", 0, auto_qty, f"스케줄러 매도 ({strategy.name})")
+                        add_trade(auto_ticker, "KR", "SELL", 0, auto_qty, f"스케줄러 {reason}")
+                    st.session_state["auto_buy_avg"] = 0
+                elif trade_mode == "적립식 매수 (DCA)":
+                    result = api.buy_order(auto_ticker, auto_qty, 0)
+                    log_msg = f"[{now_str}] DCA BUY: {auto_ticker} x {auto_qty} → {result.get('status', 'unknown')}"
+                    st.session_state["trade_log"].append(log_msg)
+                    if result.get("status") == "success":
+                        add_trade(auto_ticker, "KR", "BUY", 0, auto_qty, "DCA 적립식 매수")
+                        prev_avg = st.session_state.get("auto_buy_avg", 0)
+                        prev_cnt = st.session_state.get("auto_buy_cnt", 0)
+                        st.session_state["auto_buy_avg"] = (prev_avg * prev_cnt + current_price) / (prev_cnt + 1)
+                        st.session_state["auto_buy_cnt"] = prev_cnt + 1
                 else:
-                    st.session_state["trade_log"].append(f"[{now_str}] AUTO HOLD: {auto_ticker} ({strategy.name})")
+                    strategy = strategy_class()
+                    signal = strategy.get_signal(df)
+                    if signal == "BUY":
+                        result = api.buy_order(auto_ticker, auto_qty, 0)
+                        log_msg = f"[{now_str}] AUTO BUY: {auto_ticker} x {auto_qty} → {result.get('status', 'unknown')}"
+                        st.session_state["trade_log"].append(log_msg)
+                        if result.get("status") == "success":
+                            add_trade(auto_ticker, "KR", "BUY", 0, auto_qty, f"스케줄러 매수 ({strategy.name})")
+                            st.session_state["auto_buy_avg"] = current_price
+                    elif signal == "SELL":
+                        result = api.sell_order(auto_ticker, auto_qty, 0)
+                        log_msg = f"[{now_str}] AUTO SELL: {auto_ticker} x {auto_qty} → {result.get('status', 'unknown')}"
+                        st.session_state["trade_log"].append(log_msg)
+                        if result.get("status") == "success":
+                            add_trade(auto_ticker, "KR", "SELL", 0, auto_qty, f"스케줄러 매도 ({strategy.name})")
+                    else:
+                        st.session_state["trade_log"].append(f"[{now_str}] AUTO HOLD: {auto_ticker} ({strategy.name})")
 
                 st.session_state["scheduler_run_count"] += 1
                 st.session_state["scheduler_last_run"] = now_str

@@ -93,23 +93,39 @@ class BacktestEngine:
         else:
             sharpe = 0
 
-        # 승률
-        sell_trades = [t for t in self.trades if t["action"] == "SELL"]
-        if sell_trades:
-            wins = sum(1 for t in sell_trades if t.get("pnl", 0) > 0)
-            win_rate = wins / len(sell_trades) * 100
+        # 소르티노 비율 (하방 변동성만 고려)
+        downside = daily_returns[daily_returns < 0]
+        if len(downside) > 0 and downside.std() > 0:
+            sortino = (daily_returns.mean() - 0.03 / 252) / downside.std() * np.sqrt(252)
         else:
-            win_rate = 0
+            sortino = 0
+
+        # 칼마 비율 (연환산 수익률 / MDD)
+        calmar = abs(annual_return / mdd) if mdd != 0 else 0
+
+        # 평균 수익/손실
+        sell_trades = [t for t in self.trades if t["action"] == "SELL"]
+        wins = [t.get("pnl", 0) for t in sell_trades if t.get("pnl", 0) > 0]
+        losses = [t.get("pnl", 0) for t in sell_trades if t.get("pnl", 0) < 0]
+        avg_win = np.mean(wins) if wins else 0
+        avg_loss = np.mean(losses) if losses else 0
+        profit_factor = abs(sum(wins) / sum(losses)) if losses and sum(losses) != 0 else 0
+        win_rate = len(wins) / len(sell_trades) * 100 if sell_trades else 0
 
         self.results = {
             "총 수익률 (%)": round(total_return, 2),
             "연환산 수익률 (%)": round(annual_return, 2),
             "최대 낙폭 MDD (%)": round(mdd, 2),
             "샤프 비율": round(sharpe, 2),
+            "소르티노 비율": round(sortino, 2),
+            "칼마 비율": round(calmar, 2),
             "총 거래 횟수": len(self.trades),
             "매수 횟수": sum(1 for t in self.trades if t["action"] == "BUY"),
             "매도 횟수": len(sell_trades),
             "승률 (%)": round(win_rate, 2),
+            "평균 수익": round(avg_win, 0),
+            "평균 손실": round(avg_loss, 0),
+            "손익비 (Profit Factor)": round(profit_factor, 2),
             "최종 자산": round(self.equity_curve["equity"].iloc[-1], 0),
             "초기 자본": self.initial_capital,
         }

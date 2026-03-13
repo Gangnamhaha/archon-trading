@@ -157,3 +157,84 @@ else:
                 height=400, template="plotly_dark",
             )
             st.plotly_chart(fig_bar, use_container_width=True)
+
+        st.markdown("---")
+
+        # === 리밸런싱 알림 ===
+        st.subheader("⚖️ 리밸런싱 분석")
+        alloc_data = tracker.get_allocation()
+        if not alloc_data.empty and len(alloc_data) >= 2:
+            total_val = alloc_data["평가금액"].sum()
+            alloc_data["현재비율(%)"] = (alloc_data["평가금액"] / total_val * 100).round(1)
+            equal_target = round(100.0 / len(alloc_data), 1)
+            alloc_data["목표비율(%)"] = equal_target
+            alloc_data["차이(%)"] = (alloc_data["현재비율(%)"] - alloc_data["목표비율(%)"]).round(1)
+            alloc_data["조정"] = alloc_data["차이(%)"].apply(
+                lambda d: "🔴 매도 필요" if d > 5 else ("🟢 매수 필요" if d < -5 else "✅ 적정")
+            )
+
+            rebal_display = alloc_data[["name", "평가금액", "현재비율(%)", "목표비율(%)", "차이(%)", "조정"]].copy()
+            rebal_display.columns = ["종목명", "평가금액", "현재비율(%)", "목표비율(%)", "차이(%)", "조정"]
+            st.dataframe(rebal_display, use_container_width=True, hide_index=True)
+
+            needs_rebal = alloc_data[alloc_data["차이(%)"].abs() > 5]
+            if not needs_rebal.empty:
+                st.warning(f"⚠️ {len(needs_rebal)}개 종목이 목표 비율 대비 5%p 이상 벗어났습니다. 리밸런싱을 검토하세요.")
+            else:
+                st.success("✅ 모든 종목이 균등 배분 기준 ±5%p 이내입니다.")
+
+            st.caption("※ 목표비율은 균등 배분 기준입니다. 향후 사용자 지정 비율 설정 기능이 추가될 예정입니다.")
+
+        # === 분산투자 최적화 ===
+        if _user_is_pro and len(holdings) >= 2:
+            st.markdown("---")
+            st.subheader("📊 분산투자 최적화 (효율적 프론티어)")
+            if st.button("최적 포트폴리오 계산", use_container_width=True):
+                with st.spinner("최적화 계산 중..."):
+                    tickers_list = holdings["ticker"].tolist()
+                    markets_list = holdings["market"].tolist()
+                    try:
+                        returns_data = {}
+                        for t, m in zip(tickers_list, markets_list):
+                            stock_df = fetch_stock(t, m, "1y")
+                            if not stock_df.empty:
+                                returns_data[t] = stock_df["Close"].pct_change().dropna()
+                        if len(returns_data) >= 2:
+                            import numpy as np
+                            returns_df = pd.DataFrame(returns_data).dropna()
+                            mean_ret = returns_df.mean() * 252
+                            cov_mat = returns_df.cov() * 252
+                            n = len(returns_data)
+                            best_sharpe, best_w = -999, None
+                            np.random.seed(42)
+                            for _ in range(5000):
+                                w = np.random.dirichlet(np.ones(n))
+                                p_ret = np.dot(w, mean_ret)
+                                p_vol = np.sqrt(np.dot(w, np.dot(cov_mat, w)))
+                                sharpe = (p_ret - 0.03) / p_vol if p_vol > 0 else 0
+                                if sharpe > best_sharpe:
+                                    best_sharpe, best_w = sharpe, w
+                            opt_col1, opt_col2 = st.columns(2)
+                            with opt_col1:
+                                opt_df = pd.DataFrame({
+                                    "종목": list(returns_data.keys()),
+                                    "현재비율(%)": [round(100.0 / n, 1)] * n,
+                                    "최적비율(%)": [round(w * 100, 1) for w in best_w],
+                                })
+                                st.dataframe(opt_df, use_container_width=True, hide_index=True)
+                            with opt_col2:
+                                fig_opt = go.Figure(data=[go.Pie(
+                                    labels=list(returns_data.keys()),
+                                    values=[round(w * 100, 1) for w in best_w],
+                                    hole=0.4
+                                )])
+                                fig_opt.update_layout(title="최적 포트폴리오 비율", height=350, template="plotly_dark")
+                                st.plotly_chart(fig_opt, use_container_width=True)
+                            st.metric("최적 샤프 비율", f"{best_sharpe:.2f}")
+                        else:
+                            st.warning("최적화를 위해 최소 2개 종목의 1년치 데이터가 필요합니다.")
+                    except Exception as e:
+                        st.error(f"최적화 실패: {e}")
+        elif not _user_is_pro:
+            st.markdown("---")
+            st.info("💎 분산투자 최적화는 Pro 전용 기능입니다.")

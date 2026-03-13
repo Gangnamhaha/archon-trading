@@ -98,10 +98,16 @@ if st.sidebar.button("백테스팅 실행", type="primary", use_container_width=
             col4.metric("샤프 비율", f"{results.get('샤프 비율', 0):.2f}")
 
             col5, col6, col7, col8 = st.columns(4)
-            col5.metric("총 거래 횟수", results.get("총 거래 횟수", 0))
-            col6.metric("승률", f"{results.get('승률 (%)', 0):.1f}%")
-            col7.metric("최종 자산", f"{results.get('최종 자산', 0):,.0f}")
-            col8.metric("초기 자본", f"{initial_capital:,.0f}")
+            col5.metric("소르티노 비율", f"{results.get('소르티노 비율', 0):.2f}")
+            col6.metric("칼마 비율", f"{results.get('칼마 비율', 0):.2f}")
+            col7.metric("손익비", f"{results.get('손익비 (Profit Factor)', 0):.2f}")
+            col8.metric("승률", f"{results.get('승률 (%)', 0):.1f}%")
+
+            col9, col10, col11, col12 = st.columns(4)
+            col9.metric("총 거래 횟수", results.get("총 거래 횟수", 0))
+            col10.metric("평균 수익", f"{results.get('평균 수익', 0):,.0f}")
+            col11.metric("평균 손실", f"{results.get('평균 손실', 0):,.0f}")
+            col12.metric("최종 자산", f"{results.get('최종 자산', 0):,.0f}")
 
             st.markdown("---")
 
@@ -187,9 +193,13 @@ if st.button("모든 전략 비교 실행", use_container_width=True):
                 results_table.append({
                     "전략": name,
                     "총 수익률 (%)": res.get("총 수익률 (%)", 0),
+                    "연환산 (%)": res.get("연환산 수익률 (%)", 0),
                     "MDD (%)": res.get("최대 낙폭 MDD (%)", 0),
-                    "샤프 비율": res.get("샤프 비율", 0),
+                    "샤프": res.get("샤프 비율", 0),
+                    "소르티노": res.get("소르티노 비율", 0),
+                    "칼마": res.get("칼마 비율", 0),
                     "승률 (%)": res.get("승률 (%)", 0),
+                    "손익비": res.get("손익비 (Profit Factor)", 0),
                     "거래 횟수": res.get("총 거래 횟수", 0),
                 })
 
