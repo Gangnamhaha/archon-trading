@@ -118,12 +118,9 @@ input,select,textarea{font-size:16px !important}
 
 _HIDE_ADMIN_UI = """<style>
 .stToolbarActions,
-.stMainMenu,
 .stDeployButton,
 [data-testid="stToolbarActions"],
-[data-testid="stMainMenu"],
-[data-testid="manage-app-button"],
-#MainMenu {
+[data-testid="manage-app-button"] {
     display: none !important;
     visibility: hidden !important;
 }
