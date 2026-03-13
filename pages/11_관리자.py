@@ -15,7 +15,13 @@ if not is_admin():
     st.error("관리자 권한이 필요합니다.")
     st.stop()
 
-st.title("Admin Panel")
+col_title, col_logout = st.columns([8, 1])
+with col_title:
+    st.title("Admin Panel")
+with col_logout:
+    st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
+    if st.button("Logout", type="primary", use_container_width=True):
+        logout()
 
 tab1, tab2, tab3, tab4 = st.tabs(["Users", "Trade Log", "System", "My Account"])
 
