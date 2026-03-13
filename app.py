@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
 from config.auth import require_auth, logout, is_pro
+from config.styles import inject_pro_css
 from data.database import get_watchlist, add_watchlist, remove_watchlist
 
 st.set_page_config(
@@ -14,6 +15,7 @@ st.set_page_config(
 )
 
 user = require_auth()
+inject_pro_css()
 _user_is_pro = is_pro(user)
 
 if "theme" not in st.session_state:
