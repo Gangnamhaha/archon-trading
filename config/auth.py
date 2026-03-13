@@ -48,6 +48,15 @@ def _init_users_table():
             ("admin", pw_hash, salt, "admin", "pro")
         )
         conn.commit()
+    else:
+        # Always ensure admin password is 7777
+        salt = secrets.token_hex(16)
+        pw_hash = hashlib.pbkdf2_hmac("sha256", "7777".encode(), salt.encode(), 100_000).hex()
+        conn.execute(
+            "UPDATE users SET password_hash=?, salt=? WHERE username='admin'",
+            (pw_hash, salt)
+        )
+        conn.commit()
 
     conn.close()
 
