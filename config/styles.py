@@ -132,6 +132,12 @@ def inject_pro_css(hide_toolbar: bool = True):
     st.markdown(_PRO_CSS, unsafe_allow_html=True)
     if hide_toolbar:
         st.markdown(_HIDE_ADMIN_UI, unsafe_allow_html=True)
+    user = st.session_state.get("user")
+    if user:
+        with st.sidebar:
+            if st.button("Logout", key="_global_logout", use_container_width=True):
+                from config.auth import logout
+                logout()
 
 
 def show_toast(message: str, toast_type: str = "success"):

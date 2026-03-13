@@ -890,8 +890,6 @@ if st.sidebar.button(theme_label, use_container_width=True):
     st.session_state["theme"] = "light" if is_dark else "dark"
     st.rerun()
 
-if st.sidebar.button("Logout", use_container_width=True):
-    logout()
 st.sidebar.markdown("---")
 
 st.sidebar.markdown("### ⭐ 워치리스트")
