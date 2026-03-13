@@ -9,5 +9,9 @@ font = "sans serif"
 headless = true
 enableStaticServing = true
 
+[client]
+showSidebarNavigation = true
+toolbarMode = "minimal"
+
 [browser]
 gatherUsageStats = false
