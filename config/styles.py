@@ -116,9 +116,19 @@ input,select,textarea{font-size:16px !important}
 </style>"""
 
 
+_HIDE_ADMIN_UI = """<style>
+.stDeployButton, [data-testid="stToolbarActions"] a[href*="github"],
+header [data-testid="stToolbarActions"] > div:has(a[href*="github"]) {
+    display: none !important;
+}
+</style>"""
+
+
 def inject_pro_css():
     st.markdown(_PWA_META, unsafe_allow_html=True)
     st.markdown(_PRO_CSS, unsafe_allow_html=True)
+    if st.session_state.get("user", {}).get("role") != "admin":
+        st.markdown(_HIDE_ADMIN_UI, unsafe_allow_html=True)
 
 
 def show_toast(message: str, toast_type: str = "success"):
