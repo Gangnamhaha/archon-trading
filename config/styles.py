@@ -127,14 +127,14 @@ _HIDE_ADMIN_UI = """<style>
 </style>"""
 
 
-def inject_pro_css(hide_toolbar: bool = True):
+def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
     st.markdown(_PWA_META, unsafe_allow_html=True)
     st.markdown(_PRO_CSS, unsafe_allow_html=True)
     if hide_toolbar:
         st.markdown(_HIDE_ADMIN_UI, unsafe_allow_html=True)
-    user = st.session_state.get("user")
-    if user:
+    if show_logout and st.session_state.get("user"):
         with st.sidebar:
+            st.markdown("---")
             if st.button("Logout", key="_global_logout", use_container_width=True):
                 from config.auth import logout
                 logout()

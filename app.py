@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 user = require_auth()
-inject_pro_css()
+inject_pro_css(show_logout=False)
 _user_is_pro = is_pro(user)
 
 if "theme" not in st.session_state:
@@ -943,3 +943,5 @@ st.sidebar.markdown("---")
 st.sidebar.info("KR: KRX (KOSPI/KOSDAQ)\n\nUS: NYSE / NASDAQ")
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Archon** v2.0 | Python 3.9+")
+if st.sidebar.button("Logout", key="home_logout", use_container_width=True):
+    logout()
