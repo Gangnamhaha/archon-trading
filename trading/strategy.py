@@ -160,10 +160,39 @@ class BollingerStrategy(TradingStrategy):
         return "HOLD"
 
 
+class VolatilityBreakout(TradingStrategy):
+    def __init__(self, k: float = 0.5, stop_loss_pct: float = 2.0):
+        super().__init__("변동성 돌파 전략")
+        self.k = k
+        self.stop_loss_pct = stop_loss_pct
+        self.params = {"k": k, "손절(%)": stop_loss_pct}
+
+    def get_signal(self, df: pd.DataFrame) -> str:
+        if len(df) < 2:
+            return "HOLD"
+
+        curr_open = df["Open"].iloc[-1]
+        curr_price = df["Close"].iloc[-1]
+        prev_high = df["High"].iloc[-2]
+        prev_low = df["Low"].iloc[-2]
+        stop_loss_price = curr_open * (1 - self.stop_loss_pct / 100)
+
+        if pd.isna(curr_open) or pd.isna(curr_price) or pd.isna(prev_high) or pd.isna(prev_low):
+            return "HOLD"
+
+        target_price = curr_open + (prev_high - prev_low) * self.k
+        if curr_price > target_price:
+            return "BUY"
+        if curr_price <= stop_loss_price:
+            return "SELL"
+        return "HOLD"
+
+
 # 사용 가능한 전략 목록
 AVAILABLE_STRATEGIES = {
     "골든크로스": GoldenCrossStrategy,
     "RSI": RSIStrategy,
     "MACD": MACDStrategy,
     "볼린저밴드": BollingerStrategy,
+    "변동성 돌파": VolatilityBreakout,
 }

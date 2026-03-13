@@ -3,7 +3,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 import pandas as pd
+from datetime import datetime, timedelta
+from typing import Any, Dict, List
+from pykrx import stock as krx
 from data.screener import get_krx_market_data, screen_stocks, PRESETS
+from analysis.technical import calc_rsi
 from config.styles import inject_pro_css
 from config.auth import require_auth, is_pro
 
@@ -15,14 +19,79 @@ st.title("Stock Screener")
 _user_is_pro = is_pro()
 _MAX_FREE_FILTERS = 3
 
+
+@st.cache_data(ttl=300)
+def get_momentum_scalping_signals(market: str) -> pd.DataFrame:
+    columns = ["종목코드", "종목명", "현재가", "등락률(%)", "거래량비율", "RSI"]
+    today = datetime.now()
+    daily_frames: List[pd.DataFrame] = []
+    cursor = today
+    attempts = 0
+
+    while len(daily_frames) < 21 and attempts < 45:
+        date_str = cursor.strftime("%Y%m%d")
+        daily = krx.get_market_ohlcv_by_ticker(date_str, market=market)
+        if not daily.empty:
+            daily_frames.append(daily)
+        cursor -= timedelta(days=1)
+        attempts += 1
+
+    if len(daily_frames) < 2:
+        return pd.DataFrame(columns=columns)
+
+    current = daily_frames[0].copy()
+    avg_volume_obj = pd.concat([frame["거래량"] for frame in daily_frames[1:]], axis=1).mean(axis=1)
+    if not isinstance(avg_volume_obj, pd.Series):
+        return pd.DataFrame(columns=columns)
+    avg_volume = avg_volume_obj.mask(avg_volume_obj == 0)
+
+    current["거래량비율"] = current["거래량"] / avg_volume
+    current["등락률(%)"] = (current["종가"] / current["시가"] - 1) * 100
+
+    candidates = current[(current["거래량비율"] > 3) & (current["등락률(%)"] > 2)].copy()
+    if candidates.empty:
+        return pd.DataFrame(columns=columns)
+
+    start = (today - timedelta(days=120)).strftime("%Y%m%d")
+    end = today.strftime("%Y%m%d")
+    results: List[Dict[str, Any]] = []
+
+    for ticker, row in candidates.iterrows():
+        try:
+            ohlcv = krx.get_market_ohlcv(start, end, ticker)
+            if ohlcv.empty or len(ohlcv) < 15:
+                continue
+
+            close_df: pd.DataFrame = ohlcv.rename(columns={"종가": "Close"}).loc[:, ["Close"]].copy()
+            rsi_df = calc_rsi(close_df)
+            rsi_value = rsi_df["RSI"].iloc[-1]
+            if pd.isna(rsi_value) or rsi_value >= 70:
+                continue
+
+            results.append({
+                "종목코드": ticker,
+                "종목명": krx.get_market_ticker_name(str(ticker)),
+                "현재가": int(row["종가"]),
+                "등락률(%)": round(float(row["등락률(%)"]), 2),
+                "거래량비율": round(float(row["거래량비율"]), 2),
+                "RSI": round(float(rsi_value), 2),
+            })
+        except Exception:
+            continue
+
+    if not results:
+        return pd.DataFrame(columns=columns)
+
+    return pd.DataFrame(results).sort_values("등락률(%)", ascending=False).reset_index(drop=True)
+
 st.sidebar.header("Filter Settings")
 
-market = st.sidebar.selectbox("Market", ["KOSPI", "KOSDAQ"])
+market = str(st.sidebar.selectbox("Market", ["KOSPI", "KOSDAQ"]))
 top_n = st.sidebar.slider("Scan Top N Stocks", 20, 200, 50)
 
 st.sidebar.markdown("---")
 st.sidebar.header("Preset Filters")
-preset_name = st.sidebar.selectbox("Preset", ["Custom"] + list(PRESETS.keys()))
+preset_name = str(st.sidebar.selectbox("Preset", ["Custom"] + list(PRESETS.keys())))
 
 st.sidebar.markdown("---")
 st.sidebar.header("Custom Filters")
@@ -78,8 +147,9 @@ if st.sidebar.button("Run Screener", type="primary", use_container_width=True):
                 filters["vol_ratio_min"] = vol_ratio_min
 
         filtered = screen_stocks(raw_data, filters)
+        filtered_df = pd.DataFrame(filtered)
 
-        if div_filter and not filtered.empty:
+        if div_filter and not filtered_df.empty:
             from pykrx import stock as krx
             from datetime import datetime as _dt, timedelta
             try:
@@ -89,46 +159,44 @@ if st.sidebar.button("Run Screener", type="primary", use_container_width=True):
                 )
                 if not div_data.empty:
                     div_yields = {}
-                    for t in filtered.index if filtered.index.name else filtered["ticker"] if "ticker" in filtered.columns else []:
+                    for t in filtered_df.index if filtered_df.index.name else filtered_df["ticker"] if "ticker" in filtered_df.columns else []:
                         try:
-                            div_info = krx.get_market_trading_value_and_volume(year + "0101", year + "1231", t)
+                            div_fn = getattr(krx, "get_market_trading_value_and_volume", None)
+                            if div_fn is None:
+                                continue
+                            div_info = div_fn(year + "0101", year + "1231", t)
                             if hasattr(div_info, "배당수익률") and len(div_info) > 0:
                                 div_yields[t] = float(div_info["배당수익률"].iloc[-1])
                         except Exception:
                             div_yields[t] = 0.0
                     if div_yields:
-                        filtered["배당수익률(%)"] = filtered.index.map(lambda x: div_yields.get(x, 0.0))
-                        filtered = filtered[filtered["배당수익률(%)"] >= min_div_yield]
+                        filtered_df["배당수익률(%)"] = filtered_df.index.map(lambda x: div_yields.get(x, 0.0))
+                        filtered_df = filtered_df[filtered_df["배당수익률(%)"] >= min_div_yield]
             except Exception:
                 st.caption("배당 데이터 조회 실패 — 배당 필터 미적용")
 
         col1, col2, col3 = st.columns(3)
         col1.metric("Total Scanned", len(raw_data))
-        col2.metric("Filtered Results", len(filtered))
-        col3.metric("Pass Rate", f"{len(filtered)/len(raw_data)*100:.1f}%" if len(raw_data) > 0 else "0%")
+        col2.metric("Filtered Results", len(filtered_df))
+        col3.metric("Pass Rate", f"{len(filtered_df)/len(raw_data)*100:.1f}%" if len(raw_data) > 0 else "0%")
 
         st.markdown("---")
 
-        if filtered.empty:
+        if filtered_df.empty:
             st.warning("No stocks matched the filters.")
         else:
-            st.subheader(f"Results ({len(filtered)} stocks)")
+            st.subheader(f"Results ({len(filtered_df)} stocks)")
 
-            display_cols = [c for c in filtered.columns if c not in ["MACD_Signal"]]
-            st.dataframe(
-                filtered[display_cols].style.applymap(
-                    lambda v: "color: #FF6B6B" if isinstance(v, (int, float)) and v < 0 else (
-                        "color: #00D4AA" if isinstance(v, (int, float)) and v > 0 else ""
-                    ),
-                    subset=[c for c in ["1일수익률(%)", "5일수익률(%)", "20일수익률(%)"] if c in filtered.columns]
-                ),
-                use_container_width=True, hide_index=True, height=600
-            )
+            display_cols = [c for c in filtered_df.columns if c not in ["MACD_Signal"]]
+            display_df = pd.DataFrame(filtered_df.loc[:, display_cols])
+            st.dataframe(display_df, use_container_width=True, hide_index=True, height=600)
 
             st.subheader("RSI Distribution")
             import plotly.express as px
-            if "RSI" in filtered.columns:
-                fig = px.histogram(filtered.dropna(subset=["RSI"]), x="RSI", nbins=20,
+            if "RSI" in filtered_df.columns:
+                rsi_series = pd.Series(filtered_df["RSI"])
+                rsi_df = filtered_df[rsi_series.notna()]
+                fig = px.histogram(rsi_df, x="RSI", nbins=20,
                                    color_discrete_sequence=["#00D4AA"])
                 fig.add_vline(x=30, line_dash="dash", line_color="green", annotation_text="Oversold")
                 fig.add_vline(x=70, line_dash="dash", line_color="red", annotation_text="Overbought")
@@ -136,3 +204,17 @@ if st.sidebar.button("Run Screener", type="primary", use_container_width=True):
                 st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("Set filters and click 'Run Screener'.")
+
+st.markdown("---")
+st.subheader("모멘텀 스캘핑 시그널")
+if _user_is_pro:
+    try:
+        momentum_df = get_momentum_scalping_signals(market)
+        if momentum_df.empty:
+            st.info("조건을 만족하는 종목이 없습니다.")
+        else:
+            st.dataframe(momentum_df, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.error(f"모멘텀 스캘핑 데이터 조회 실패: {e}")
+else:
+    st.caption("Pro 전용")

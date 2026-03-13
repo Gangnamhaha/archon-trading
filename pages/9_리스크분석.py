@@ -17,7 +17,7 @@ require_pro()
 inject_pro_css()
 st.title("Risk Analysis & Monte Carlo")
 
-tab1, tab2, tab3 = st.tabs(["Risk Metrics", "Monte Carlo Simulation", "Efficient Frontier"])
+tab1, tab2, tab3, tab4 = st.tabs(["Risk Metrics", "Monte Carlo Simulation", "Efficient Frontier", "Leverage Simulator"])
 
 with tab1:
     st.sidebar.header("Risk Settings")
@@ -230,3 +230,109 @@ with tab3:
                         weights_df2 = pd.DataFrame([ef["min_vol_weights"]]).T
                         weights_df2.columns = ["Weight (%)"]
                         st.dataframe(weights_df2)
+
+with tab4:
+    st.subheader("Leverage/Margin Simulator")
+
+    lev_market = st.selectbox("Market", ["KR", "US"], key="lev_market")
+    lev_ticker = st.text_input("Ticker", value="005930" if lev_market == "KR" else "AAPL", key="lev_ticker")
+    lev_period = st.selectbox("Period", ["6mo", "1y", "2y"], index=1, key="lev_period")
+    leverage = st.slider("Leverage Multiplier", min_value=1.0, max_value=5.0, value=2.0, step=0.5, key="lev_mult")
+
+    if st.button("Run Leverage Simulation", type="primary", key="btn_lev"):
+        with st.spinner("Running leverage simulation..."):
+            df_lev = fetch_stock(lev_ticker, lev_market, lev_period)
+
+        if df_lev.empty:
+            st.error("Failed to fetch data.")
+        else:
+            returns = df_lev["Close"].pct_change().dropna()
+            leveraged_returns = returns * leverage
+
+            equity_1x = (1 + returns).cumprod()
+            equity_lev = (1 + leveraged_returns).cumprod()
+
+            def _calc_metrics(ret_series: pd.Series, equity_series: pd.Series) -> dict:
+                periods = len(ret_series)
+                final_value = equity_series.iloc[-1] if not equity_series.empty else 1.0
+                if periods > 0 and final_value > 0:
+                    annual_return = (final_value ** (252 / periods) - 1) * 100
+                else:
+                    annual_return = -100.0
+
+                annual_vol = ret_series.std() * np.sqrt(252) * 100 if periods > 1 else 0.0
+                rolling_max = equity_series.cummax()
+                drawdown = (equity_series - rolling_max) / rolling_max
+                mdd = drawdown.min() * 100 if not drawdown.empty else 0.0
+
+                if ret_series.std() > 0:
+                    sharpe = (ret_series.mean() - 0.03 / 252) / ret_series.std() * np.sqrt(252)
+                else:
+                    sharpe = 0.0
+
+                return {
+                    "연수익률(%)": annual_return,
+                    "연변동성(%)": annual_vol,
+                    "MDD(%)": mdd,
+                    "샤프비율": sharpe,
+                }
+
+            metrics_1x = _calc_metrics(returns, equity_1x)
+            metrics_lev = _calc_metrics(leveraged_returns, equity_lev)
+
+            compare_df = pd.DataFrame([
+                {
+                    "구분": "1x",
+                    "연수익률(%)": metrics_1x["연수익률(%)"],
+                    "연변동성(%)": metrics_1x["연변동성(%)"],
+                    "MDD(%)": metrics_1x["MDD(%)"],
+                    "샤프비율": metrics_1x["샤프비율"],
+                },
+                {
+                    "구분": f"{leverage:.1f}x",
+                    "연수익률(%)": metrics_lev["연수익률(%)"],
+                    "연변동성(%)": metrics_lev["연변동성(%)"],
+                    "MDD(%)": metrics_lev["MDD(%)"],
+                    "샤프비율": metrics_lev["샤프비율"],
+                },
+            ])
+
+            st.dataframe(
+                compare_df.style.format({
+                    "연수익률(%)": "{:.2f}",
+                    "연변동성(%)": "{:.2f}",
+                    "MDD(%)": "{:.2f}",
+                    "샤프비율": "{:.3f}",
+                }),
+                use_container_width=True,
+            )
+
+            fig_lev = go.Figure()
+            fig_lev.add_trace(go.Scatter(
+                x=equity_1x.index, y=equity_1x,
+                name="1x Equity", line=dict(color="#00D4AA", width=2)
+            ))
+            fig_lev.add_trace(go.Scatter(
+                x=equity_lev.index, y=equity_lev,
+                name=f"{leverage:.1f}x Equity", line=dict(color="#FF6B6B", width=2)
+            ))
+            fig_lev.update_layout(
+                title="Equity Curve Comparison",
+                template="plotly_dark",
+                height=450,
+                xaxis_title="Date",
+                yaxis_title="Equity (Start=1.0)",
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_lev, use_container_width=True)
+
+            st.warning(
+                f"⚠️ 레버리지는 수익과 손실을 모두 증폭합니다. {leverage:.1f}x 레버리지 시 -{100 / leverage:.0f}% 하락으로 원금 전액 손실 가능."
+            )
+
+            st.markdown("---")
+            st.markdown("**Liquidation Price Calculator**")
+            entry_price = st.number_input("Entry Price", min_value=0.01, value=float(df_lev["Close"].iloc[-1]), step=0.01, key="lev_entry")
+            liq_price = entry_price * (1 - 1 / leverage)
+            drop_pct = 100 / leverage
+            st.metric("Estimated Margin Call Price", f"{liq_price:,.2f}", f"-{drop_pct:.2f}% from entry")

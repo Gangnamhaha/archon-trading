@@ -11,7 +11,8 @@ import plotly.graph_objects as go
 from data.fetcher import fetch_stock
 from analysis.backtest import (
     BacktestEngine, STRATEGIES,
-    golden_cross_strategy, rsi_strategy, macd_strategy, bollinger_strategy
+    golden_cross_strategy, rsi_strategy, macd_strategy, bollinger_strategy,
+    volatility_breakout_strategy, aggressive_momentum_strategy
 )
 from config.styles import inject_pro_css
 from config.auth import require_pro
@@ -53,6 +54,11 @@ strategy_name = st.sidebar.selectbox("투자 전략", list(STRATEGIES.keys()))
 st.sidebar.markdown("---")
 st.sidebar.header("전략 파라미터")
 
+short_ma, long_ma = 5, 20
+rsi_buy, rsi_sell = 30, 70
+bb_period, bb_std = 20, 2.0
+vb_k, vol_mult = 0.5, 2.0
+
 if strategy_name == "골든크로스/데드크로스":
     short_ma = st.sidebar.slider("단기 이동평균", 3, 30, 5)
     long_ma = st.sidebar.slider("장기 이동평균", 10, 200, 20)
@@ -64,6 +70,12 @@ elif strategy_name == "MACD 전략":
 elif strategy_name == "볼린저밴드 전략":
     bb_period = st.sidebar.slider("볼린저 기간", 10, 50, 20)
     bb_std = st.sidebar.slider("표준편차 배수", 1.0, 3.0, 2.0, 0.5)
+elif strategy_name == "변동성 돌파 전략":
+    vb_k = st.sidebar.slider("돌파 계수 (k)", 0.1, 1.0, 0.5, 0.1)
+elif strategy_name == "공격적 모멘텀 전략":
+    rsi_buy = st.sidebar.slider("매수 RSI 상향돌파 기준", 20, 60, 40)
+    rsi_sell = st.sidebar.slider("매도 RSI 상향돌파 기준", 60, 90, 75)
+    vol_mult = st.sidebar.slider("거래량 배수", 1.0, 5.0, 2.0, 0.1)
 
 # === 백테스팅 실행 ===
 if st.sidebar.button("백테스팅 실행", type="primary", use_container_width=True):
@@ -82,6 +94,12 @@ if st.sidebar.button("백테스팅 실행", type="primary", use_container_width=
                 signals = macd_strategy(df)
             elif strategy_name == "볼린저밴드 전략":
                 signals = bollinger_strategy(df, bb_period, bb_std)
+            elif strategy_name == "변동성 돌파 전략":
+                signals = volatility_breakout_strategy(df, vb_k)
+            elif strategy_name == "공격적 모멘텀 전략":
+                signals = aggressive_momentum_strategy(df, rsi_buy, rsi_sell, vol_mult)
+            else:
+                signals = STRATEGIES[strategy_name](df)
 
             # 백테스팅 실행
             engine = BacktestEngine(df, initial_capital, commission / 100)

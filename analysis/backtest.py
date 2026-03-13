@@ -223,10 +223,61 @@ def bollinger_strategy(df: pd.DataFrame, period: int = 20, std_dev: float = 2.0)
     return signals
 
 
+def volatility_breakout_strategy(df: pd.DataFrame, k: float = 0.5) -> pd.Series:
+    signals = pd.Series(0, index=df.index)
+    in_position = False
+
+    for i in range(1, len(df)):
+        if in_position:
+            signals.iloc[i] = -1
+            in_position = False
+            continue
+
+        breakout_price = df["Open"].iloc[i] + (df["High"].iloc[i - 1] - df["Low"].iloc[i - 1]) * k
+        if df["Close"].iloc[i] > breakout_price:
+            signals.iloc[i] = 1
+            in_position = True
+
+    return signals
+
+
+def aggressive_momentum_strategy(
+    df: pd.DataFrame,
+    rsi_buy: int = 40,
+    rsi_sell: int = 75,
+    vol_mult: float = 2.0,
+) -> pd.Series:
+    data = calc_rsi(df)
+    rsi = pd.Series(data["RSI"], index=df.index)
+    volume = pd.Series(df["Volume"], index=df.index)
+    vol_ma20 = volume.rolling(20).mean()
+    rsi_values = np.asarray(rsi)
+    volume_values = np.asarray(volume)
+    vol_ma20_values = np.asarray(vol_ma20)
+
+    signals = pd.Series(0, index=df.index)
+    for i in range(1, len(df)):
+        if pd.isna(rsi_values[i]) or pd.isna(rsi_values[i - 1]) or pd.isna(vol_ma20_values[i]):
+            continue
+
+        buy_cross = rsi_values[i] > rsi_buy and rsi_values[i - 1] <= rsi_buy
+        volume_break = volume_values[i] > vol_ma20_values[i] * vol_mult
+        sell_cross = rsi_values[i] > rsi_sell and rsi_values[i - 1] <= rsi_sell
+
+        if buy_cross and volume_break:
+            signals.iloc[i] = 1
+        elif sell_cross:
+            signals.iloc[i] = -1
+
+    return signals
+
+
 # 전략 목록
 STRATEGIES = {
     "골든크로스/데드크로스": golden_cross_strategy,
     "RSI 전략": rsi_strategy,
     "MACD 전략": macd_strategy,
     "볼린저밴드 전략": bollinger_strategy,
+    "변동성 돌파 전략": volatility_breakout_strategy,
+    "공격적 모멘텀 전략": aggressive_momentum_strategy,
 }

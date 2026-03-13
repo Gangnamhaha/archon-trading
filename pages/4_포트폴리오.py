@@ -235,6 +235,97 @@ else:
                             st.warning("최적화를 위해 최소 2개 종목의 1년치 데이터가 필요합니다.")
                     except Exception as e:
                         st.error(f"최적화 실패: {e}")
+
+            st.markdown("---")
+            st.subheader("🎯 켈리 기준 포지션 사이징")
+            try:
+                kelly_rows = []
+                for t, m, n in zip(holdings["ticker"], holdings["market"], holdings["name"]):
+                    stock_df = fetch_stock(t, m, "1y")
+                    if stock_df.empty or "Close" not in stock_df.columns:
+                        continue
+
+                    daily_ret = stock_df["Close"].pct_change().dropna()
+                    if len(daily_ret) == 0:
+                        continue
+
+                    win_returns = daily_ret[daily_ret > 0]
+                    loss_returns = daily_ret[daily_ret < 0]
+
+                    win_rate = len(win_returns) / len(daily_ret)
+                    avg_win = win_returns.mean() if len(win_returns) > 0 else 0.0
+                    avg_loss = abs(loss_returns.mean()) if len(loss_returns) > 0 else 0.0
+
+                    if avg_win > 0:
+                        kelly_fraction = (win_rate * avg_win - (1 - win_rate) * avg_loss) / avg_win
+                    else:
+                        kelly_fraction = 0.0
+
+                    recommended_weight = max(0.0, min(0.25, kelly_fraction * 0.5))
+
+                    kelly_rows.append({
+                        "종목": n,
+                        "승률(%)": round(win_rate * 100, 1),
+                        "평균수익(%)": round(avg_win * 100, 2),
+                        "평균손실(%)": round(avg_loss * 100, 2),
+                        "켈리비율(%)": round(kelly_fraction * 100, 1),
+                        "권장비중(%)": round(recommended_weight * 100, 1),
+                    })
+
+                if kelly_rows:
+                    st.dataframe(pd.DataFrame(kelly_rows), use_container_width=True, hide_index=True)
+                else:
+                    st.info("켈리 기준 계산을 위한 수익률 데이터가 부족합니다.")
+            except Exception as e:
+                st.error(f"켈리 기준 계산 실패: {e}")
+
+            st.warning("⚠️ 켈리 기준은 이론적 최적치입니다. 실전에서는 Half-Kelly (절반) 이하를 권장합니다.")
+
+            st.markdown("---")
+            st.subheader("🔗 종목간 상관관계")
+            try:
+                corr_returns = {}
+                for t, m in zip(holdings["ticker"], holdings["market"]):
+                    stock_df = fetch_stock(t, m, "1y")
+                    if stock_df.empty or "Close" not in stock_df.columns:
+                        continue
+                    daily_ret = stock_df["Close"].pct_change().dropna()
+                    if len(daily_ret) > 0:
+                        corr_returns[t] = daily_ret
+
+                returns_df = pd.DataFrame(corr_returns).dropna()
+
+                if returns_df.shape[1] >= 2:
+                    corr_matrix = returns_df.corr()
+                    fig_corr = px.imshow(
+                        corr_matrix,
+                        text_auto=True,
+                        color_continuous_scale="RdBu_r",
+                        zmin=-1,
+                        zmax=1,
+                        title="1년 일간 수익률 상관관계"
+                    )
+                    fig_corr.update_layout(height=450, template="plotly_dark")
+                    st.plotly_chart(fig_corr, use_container_width=True)
+
+                    high_corr_pairs = []
+                    tickers = list(corr_matrix.columns)
+                    for i in range(len(tickers)):
+                        for j in range(i + 1, len(tickers)):
+                            corr_val = corr_matrix.iloc[i, j]
+                            if pd.notna(corr_val) and corr_val > 0.7:
+                                high_corr_pairs.append((tickers[i], tickers[j], corr_val))
+
+                    st.markdown("**해석**")
+                    if high_corr_pairs:
+                        for t1, t2, corr_val in high_corr_pairs:
+                            st.write(f"⚠️ 높은 상관: {t1} - {t2} (상관계수 {corr_val:.2f})")
+                    else:
+                        st.write("상관계수 0.7 초과 조합이 없어 분산 효과가 상대적으로 양호합니다.")
+                else:
+                    st.info("상관관계 분석을 위해 최소 2개 종목의 1년치 데이터가 필요합니다.")
+            except Exception as e:
+                st.error(f"상관관계 분석 실패: {e}")
         elif not _user_is_pro:
             st.markdown("---")
             st.info("💎 분산투자 최적화는 Pro 전용 기능입니다.")
