@@ -13,12 +13,14 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from data.fetcher import fetch_stock, get_us_popular_stocks
 from config.styles import inject_pro_css
-from config.auth import require_auth
+from config.auth import require_auth, is_pro
 
 st.set_page_config(page_title="데이터 분석", page_icon="📈", layout="wide")
 require_auth()
 inject_pro_css()
 st.title("📈 주가 데이터 분석")
+
+_user_is_pro = is_pro()
 
 # === 사이드바 설정 ===
 st.sidebar.header("설정")
@@ -35,6 +37,14 @@ else:
     ticker = st.sidebar.text_input("종목 코드", value="005930", help="6자리 종목코드 (예: 005930 = 삼성전자)")
 
 period = st.sidebar.selectbox("조회 기간", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
+
+# 차트 간격 (Pro: 분봉/주봉 가능 / Free: 일봉만)
+if _user_is_pro:
+    interval = st.sidebar.selectbox("차트 간격", ["1d", "1wk", "1mo", "5m", "15m", "1h"], index=0,
+                                     help="Pro: 분봉/주봉/월봉 사용 가능")
+else:
+    interval = "1d"
+    st.sidebar.info("🔒 차트 간격: 일봉만 (Pro 업그레이드 시 분봉/주봉 사용 가능)")
 
 # === 데이터 조회 ===
 if st.sidebar.button("조회", type="primary", use_container_width=True):

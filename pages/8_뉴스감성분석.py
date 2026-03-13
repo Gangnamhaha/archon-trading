@@ -7,12 +7,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 from data.news import fetch_and_analyze, get_market_sentiment, NEWS_SOURCES
 from config.styles import inject_pro_css
-from config.auth import require_auth
+from config.auth import require_auth, is_pro
 
 st.set_page_config(page_title="News Sentiment", page_icon="", layout="wide")
 require_auth()
 inject_pro_css()
 st.title("News & Sentiment Analysis")
+
+_user_is_pro = is_pro()
+_MAX_FREE_ARTICLES = 5
 
 st.sidebar.header("Settings")
 sources = st.sidebar.multiselect(
@@ -22,10 +25,17 @@ sources = st.sidebar.multiselect(
 )
 keyword = st.sidebar.text_input("Keyword Filter", placeholder="e.g. Samsung, NVIDIA")
 
+if not _user_is_pro:
+    st.sidebar.info(f"🔒 Free 플랜: 하루 {_MAX_FREE_ARTICLES}건 조회 제한")
+
 if st.sidebar.button("Fetch News", type="primary", use_container_width=True):
     with st.spinner("Fetching news and analyzing sentiment..."):
         sentiment_summary = get_market_sentiment(sources)
         news_df = fetch_and_analyze(sources, keyword if keyword else None)
+
+    if not _user_is_pro and not news_df.empty and len(news_df) > _MAX_FREE_ARTICLES:
+        news_df = news_df.head(_MAX_FREE_ARTICLES)
+        st.warning(f"🔒 Free 플랜: 상위 {_MAX_FREE_ARTICLES}건만 표시됩니다. Pro 업그레이드 시 전체 조회 가능.")
 
     col1, col2, col3, col4 = st.columns(4)
     overall_color = "#00D4AA" if "긍정" in sentiment_summary["overall"] else (

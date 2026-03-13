@@ -15,16 +15,30 @@ from data.database import add_stock, remove_stock, get_portfolio
 from data.fetcher import fetch_stock
 from portfolio.tracker import PortfolioTracker
 from config.styles import inject_pro_css
-from config.auth import require_auth
+from config.auth import require_auth, is_pro
 
 st.set_page_config(page_title="포트폴리오", page_icon="💼", layout="wide")
 require_auth()
 inject_pro_css()
 st.title("💼 포트폴리오 트래커")
 
+_user_is_pro = is_pro()
+_MAX_FREE_STOCKS = 5
+
 tracker = PortfolioTracker()
 
 # === 종목 추가 폼 ===
+_current_portfolio = get_portfolio()
+_portfolio_count = len(_current_portfolio) if not _current_portfolio.empty else 0
+
+if not _user_is_pro and _portfolio_count >= _MAX_FREE_STOCKS:
+    st.warning(f"🔒 Free 플랜: 포트폴리오 종목 최대 {_MAX_FREE_STOCKS}개 (현재 {_portfolio_count}개). Pro 업그레이드 시 무제한.")
+    _can_add = False
+else:
+    _can_add = True
+    if not _user_is_pro:
+        st.info(f"Free 플랜: 포트폴리오 {_portfolio_count}/{_MAX_FREE_STOCKS}종목")
+
 st.subheader("종목 추가")
 with st.form("add_stock_form"):
     col1, col2, col3 = st.columns(3)
@@ -40,13 +54,16 @@ with st.form("add_stock_form"):
 
     submitted = st.form_submit_button("종목 추가", type="primary", use_container_width=True)
     if submitted and add_ticker and add_price > 0:
-        tracker.add_holding(
-            ticker=add_ticker, market=add_market, name=add_name,
-            buy_price=add_price, quantity=add_qty,
-            buy_date=add_date.strftime("%Y-%m-%d")
-        )
-        st.success(f"{add_name} ({add_ticker}) 추가 완료!")
-        st.rerun()
+        if not _can_add:
+            st.error(f"Free 플랜 종목 한도({_MAX_FREE_STOCKS}개)에 도달했습니다. Pro로 업그레이드하세요.")
+        else:
+            tracker.add_holding(
+                ticker=add_ticker, market=add_market, name=add_name,
+                buy_price=add_price, quantity=add_qty,
+                buy_date=add_date.strftime("%Y-%m-%d")
+            )
+            st.success(f"{add_name} ({add_ticker}) 추가 완료!")
+            st.rerun()
 
 st.markdown("---")
 

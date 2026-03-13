@@ -8,10 +8,10 @@ import pandas as pd
 from data.fetcher import fetch_stock
 from analysis.ai_predict import predict_ensemble
 from config.styles import inject_pro_css
-from config.auth import require_auth
+from config.auth import require_pro
 
 st.set_page_config(page_title="AI Prediction", page_icon="", layout="wide")
-require_auth()
+require_pro()
 inject_pro_css()
 st.title("AI Price Prediction")
 

@@ -12,10 +12,10 @@ from trading.strategy import AVAILABLE_STRATEGIES
 from data.fetcher import fetch_kr_stock
 from data.database import add_trade, get_trades
 from config.styles import inject_pro_css
-from config.auth import require_auth
+from config.auth import require_pro
 
 st.set_page_config(page_title="자동매매", page_icon="🤖", layout="wide")
-require_auth()
+require_pro()
 inject_pro_css()
 st.title("🤖 자동매매 봇")
 

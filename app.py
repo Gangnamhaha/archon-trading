@@ -3,7 +3,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
-from config.auth import require_auth, logout
+from config.auth import require_auth, logout, is_pro
 
 st.set_page_config(
     page_title="Archon - Trading Terminal",
@@ -519,7 +519,9 @@ st.markdown(
 # ---------------------------------------------------------------------------
 # Sidebar (unchanged)
 # ---------------------------------------------------------------------------
-st.sidebar.markdown(f"**{user['username']}** ({user['role']})")
+_user_is_pro = is_pro(user)
+_plan_badge = "💎 Pro" if _user_is_pro else "🆓 Free"
+st.sidebar.markdown(f"**{user['username']}** ({user['role']}) — {_plan_badge}")
 
 theme_label = "☀️ Light" if is_dark else "🌙 Dark"
 if st.sidebar.button(theme_label, use_container_width=True):
@@ -533,14 +535,22 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("### ⭐ 워치리스트")
 from data.database import get_watchlist, add_watchlist, remove_watchlist
 
+_MAX_FREE_WATCHLIST = 3
 wl = get_watchlist(user["username"])
+_wl_count = len(wl) if not wl.empty else 0
+_wl_can_add = _user_is_pro or _wl_count < _MAX_FREE_WATCHLIST
+
+if not _user_is_pro:
+    st.sidebar.caption(f"🔒 Free: {_wl_count}/{_MAX_FREE_WATCHLIST}종목")
 
 with st.sidebar.expander("종목 추가", expanded=False):
     wl_ticker = st.text_input("종목코드", key="wl_add_ticker", placeholder="005930")
     wl_name = st.text_input("종목명", key="wl_add_name", placeholder="삼성전자")
     wl_market = st.selectbox("시장", ["KR", "US"], key="wl_add_market")
     if st.button("추가", key="wl_add_btn", use_container_width=True):
-        if wl_ticker and wl_name:
+        if not _wl_can_add:
+            st.error(f"Free 플랜 한도({_MAX_FREE_WATCHLIST}종목)에 도달했습니다.")
+        elif wl_ticker and wl_name:
             add_watchlist(wl_ticker, wl_market, wl_name, user["username"])
             st.rerun()
 

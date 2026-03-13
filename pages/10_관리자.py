@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import streamlit as st
 import pandas as pd
 from config.styles import inject_pro_css
-from config.auth import require_auth, is_admin, create_user, delete_user, change_password, get_all_users, logout
+from config.auth import require_auth, is_admin, create_user, delete_user, change_password, get_all_users, logout, update_user_plan
 from data.database import get_trades, get_portfolio
 
 st.set_page_config(page_title="Admin", page_icon="", layout="wide")
@@ -35,9 +35,10 @@ with tab1:
             new_username = st.text_input("Username", key="new_user")
             new_password = st.text_input("Password", type="password", key="new_pass")
             new_role = st.selectbox("Role", ["user", "admin"], key="new_role")
+            new_plan = st.selectbox("Plan", ["free", "pro"], key="new_plan")
             if st.form_submit_button("Add", type="primary", use_container_width=True):
                 if new_username and new_password:
-                    if create_user(new_username, new_password, new_role):
+                    if create_user(new_username, new_password, new_role, new_plan):
                         st.success(f"'{new_username}' added.")
                         st.rerun()
                     else:
@@ -71,6 +72,20 @@ with tab1:
                     st.success("Password changed.")
                 else:
                     st.error("Enter new password.")
+
+    st.markdown("---")
+    st.subheader("💎 Plan Management")
+    if not users_df.empty:
+        plan_col1, plan_col2 = st.columns(2)
+        with plan_col1:
+            plan_options = {f"{r['username']} (ID: {r['id']}) — {r['plan']}": r["id"] for _, r in users_df.iterrows()}
+            plan_selection = st.selectbox("Select user", list(plan_options.keys()), key="plan_user")
+        with plan_col2:
+            new_plan_val = st.selectbox("New Plan", ["free", "pro"], key="plan_val")
+        if st.button("Change Plan", type="primary", use_container_width=True):
+            update_user_plan(plan_options[plan_selection], new_plan_val)
+            st.success(f"Plan updated to '{new_plan_val}'.")
+            st.rerun()
 
 with tab2:
     st.subheader("Trade History")

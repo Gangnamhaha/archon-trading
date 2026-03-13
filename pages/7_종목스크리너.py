@@ -5,12 +5,15 @@ import streamlit as st
 import pandas as pd
 from data.screener import get_krx_market_data, screen_stocks, PRESETS
 from config.styles import inject_pro_css
-from config.auth import require_auth
+from config.auth import require_auth, is_pro
 
 st.set_page_config(page_title="Stock Screener", page_icon="", layout="wide")
 require_auth()
 inject_pro_css()
 st.title("Stock Screener")
+
+_user_is_pro = is_pro()
+_MAX_FREE_FILTERS = 3
 
 st.sidebar.header("Filter Settings")
 
@@ -23,12 +26,20 @@ preset_name = st.sidebar.selectbox("Preset", ["Custom"] + list(PRESETS.keys()))
 
 st.sidebar.markdown("---")
 st.sidebar.header("Custom Filters")
+if not _user_is_pro:
+    st.sidebar.info(f"🔒 Free 플랜: 커스텀 필터 최대 {_MAX_FREE_FILTERS}개")
 
 rsi_range = st.sidebar.slider("RSI Range", 0, 100, (20, 80))
 macd_filter = st.sidebar.selectbox("MACD", ["All", "Golden Cross", "Dead Cross"])
 sma_filter = st.sidebar.selectbox("SMA 5/20 Trend", ["All", "Uptrend", "Downtrend"])
-vol_ratio_min = st.sidebar.slider("Min Volume Ratio", 0.0, 10.0, 0.0, 0.5)
-return_1d_range = st.sidebar.slider("1-Day Return Range (%)", -30.0, 30.0, (-10.0, 10.0))
+
+if _user_is_pro:
+    vol_ratio_min = st.sidebar.slider("Min Volume Ratio", 0.0, 10.0, 0.0, 0.5)
+    return_1d_range = st.sidebar.slider("1-Day Return Range (%)", -30.0, 30.0, (-10.0, 10.0))
+else:
+    vol_ratio_min = 0.0
+    return_1d_range = (-10.0, 10.0)
+    st.sidebar.caption("🔒 Volume Ratio, Return Range 필터는 Pro 전용입니다.")
 
 if st.sidebar.button("Run Screener", type="primary", use_container_width=True):
     with st.spinner(f"Scanning {market} top {top_n} stocks..."):

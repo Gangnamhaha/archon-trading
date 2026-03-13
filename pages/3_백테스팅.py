@@ -14,10 +14,10 @@ from analysis.backtest import (
     golden_cross_strategy, rsi_strategy, macd_strategy, bollinger_strategy
 )
 from config.styles import inject_pro_css
-from config.auth import require_auth
+from config.auth import require_pro
 
 st.set_page_config(page_title="백테스팅", page_icon="🔬", layout="wide")
-require_auth()
+require_pro()
 inject_pro_css()
 st.title("🔬 백테스팅 시스템")
 st.markdown("과거 데이터를 기반으로 투자 전략의 성과를 테스트합니다.")

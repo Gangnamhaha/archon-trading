@@ -12,12 +12,15 @@ from plotly.subplots import make_subplots
 from data.fetcher import fetch_stock
 from analysis.technical import calc_all_indicators, get_signal_summary
 from config.styles import inject_pro_css
-from config.auth import require_auth
+from config.auth import require_auth, is_pro
 
 st.set_page_config(page_title="기술적 분석", page_icon="📊", layout="wide")
 require_auth()
 inject_pro_css()
 st.title("📊 기술적 분석")
+
+_user_is_pro = is_pro()
+_MAX_FREE_INDICATORS = 5
 
 # === 사이드바 설정 ===
 st.sidebar.header("설정")
@@ -33,6 +36,8 @@ period = st.sidebar.selectbox("조회 기간", ["3mo", "6mo", "1y", "2y"], index
 
 st.sidebar.markdown("---")
 st.sidebar.header("지표 설정")
+if not _user_is_pro:
+    st.sidebar.info(f"🔒 Free 플랜: 지표 최대 {_MAX_FREE_INDICATORS}개 (Pro 업그레이드 시 무제한)")
 show_sma = st.sidebar.checkbox("이동평균선 (SMA)", value=True)
 sma_periods = st.sidebar.multiselect("SMA 기간", [5, 10, 20, 60, 120], default=[5, 20, 60])
 show_bb = st.sidebar.checkbox("볼린저밴드", value=True)
@@ -41,6 +46,31 @@ bb_std = st.sidebar.slider("볼린저밴드 표준편차", 1.0, 3.0, 2.0, 0.5)
 show_rsi = st.sidebar.checkbox("RSI", value=True)
 rsi_period = st.sidebar.slider("RSI 기간", 5, 30, 14)
 show_macd = st.sidebar.checkbox("MACD", value=True)
+
+if not _user_is_pro:
+    _selected = []
+    if show_sma:
+        for p in sma_periods:
+            _selected.append(f"SMA{p}")
+    if show_bb:
+        _selected.append("BB")
+    if show_rsi:
+        _selected.append("RSI")
+    if show_macd:
+        _selected.append("MACD")
+    if len(_selected) > _MAX_FREE_INDICATORS:
+        _over = len(_selected) - _MAX_FREE_INDICATORS
+        _cut = _selected[_MAX_FREE_INDICATORS:]
+        st.sidebar.warning(f"⚠️ 지표 {len(_selected)}개 선택됨 (최대 {_MAX_FREE_INDICATORS}개). {', '.join(_cut)} 비활성화됨.")
+        for tag in _cut:
+            if tag.startswith("SMA"):
+                sma_periods = [p for p in sma_periods if f"SMA{p}" not in _cut]
+            elif tag == "BB":
+                show_bb = False
+            elif tag == "RSI":
+                show_rsi = False
+            elif tag == "MACD":
+                show_macd = False
 
 # === 데이터 조회 및 분석 ===
 if st.sidebar.button("분석 실행", type="primary", use_container_width=True):

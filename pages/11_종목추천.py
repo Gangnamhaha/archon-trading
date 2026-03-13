@@ -5,10 +5,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import streamlit as st
 import pandas as pd
 from config.styles import inject_pro_css
-from config.auth import require_auth
+from config.auth import require_pro
 
 st.set_page_config(page_title="종목추천", page_icon="🏆", layout="wide")
-require_auth()
+require_pro()
 inject_pro_css()
 st.title("🏆 AI 종목추천")
 
