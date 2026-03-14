@@ -7,11 +7,35 @@ import sqlite3
 import os
 import random
 import string
+import base64
+import hashlib
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "portfolio.db")
+
+_ENCRYPT_KEY = hashlib.sha256(
+    os.environ.get("ARCHON_SECRET", "archon-default-key-change-me").encode()
+).digest()
+
+_SENSITIVE_KEYS = ("api_key", "app_key", "app_secret", "secret_key")
+
+
+def _xor_encrypt(data: str) -> str:
+    raw = data.encode("utf-8")
+    encrypted = bytes(b ^ _ENCRYPT_KEY[i % len(_ENCRYPT_KEY)] for i, b in enumerate(raw))
+    return base64.b64encode(encrypted).decode("ascii")
+
+
+def _xor_decrypt(data: str) -> str:
+    encrypted = base64.b64decode(data.encode("ascii"))
+    decrypted = bytes(b ^ _ENCRYPT_KEY[i % len(_ENCRYPT_KEY)] for i, b in enumerate(encrypted))
+    return decrypted.decode("utf-8")
+
+
+def _is_sensitive(key: str) -> bool:
+    return any(s in key.lower() for s in _SENSITIVE_KEYS)
 
 
 def get_connection():
@@ -125,11 +149,12 @@ def init_db():
 
 def save_user_setting(username: str, key: str, value: str):
     init_db()
+    stored = _xor_encrypt(value) if _is_sensitive(key) and value else value
     conn = get_connection()
     conn.execute(
         "INSERT OR REPLACE INTO user_settings (username, setting_key, setting_value, updated_at) "
         "VALUES (?, ?, ?, ?)",
-        (username, key, value, datetime.now().isoformat())
+        (username, key, stored, datetime.now().isoformat())
     )
     conn.commit()
     conn.close()
@@ -144,7 +169,15 @@ def load_user_setting(username: str, key: str, default: Optional[str] = None):
     )
     row = cursor.fetchone()
     conn.close()
-    return row["setting_value"] if row else default
+    if row is None:
+        return default
+    raw = row["setting_value"]
+    if _is_sensitive(key) and raw:
+        try:
+            return _xor_decrypt(raw)
+        except Exception:
+            return raw
+    return raw
 
 
 def load_all_user_settings(username: str) -> dict[str, str]:
