@@ -1,3 +1,8 @@
+import inspect
+import json
+import os
+from typing import Any, Dict
+
 import streamlit as st
 
 _PWA_META = """
@@ -176,6 +181,14 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
     if not user:
         return
 
+    from data.database import log_activity
+    _caller = inspect.stack()[1].filename
+    _page_name = os.path.basename(_caller).replace(".py", "")
+    _last_page = st.session_state.get("_last_logged_page", "")
+    if _page_name != _last_page:
+        log_activity(user["username"], "page_visit", _page_name)
+        st.session_state["_last_logged_page"] = _page_name
+
     with st.sidebar:
         if show_logout:
             st.markdown("---")
@@ -235,3 +248,19 @@ def show_toast(message: str, toast_type: str = "success"):
 def show_skeleton(count: int = 3):
     for _ in range(count):
         st.markdown('<div class="skeleton-loader"></div>', unsafe_allow_html=True)
+
+
+def save_user_preferences(username: str, page: str, settings: Dict[str, Any]):
+    from data.database import save_user_setting
+    save_user_setting(username, f"page_{page}", json.dumps(settings))
+
+
+def load_user_preferences(username: str, page: str) -> Dict[str, Any]:
+    from data.database import load_user_setting
+    raw = load_user_setting(username, f"page_{page}")
+    if raw:
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return {}

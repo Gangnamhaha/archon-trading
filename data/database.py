@@ -61,8 +61,140 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            setting_key TEXT NOT NULL,
+            setting_value TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(username, setting_key)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            chat_type TEXT NOT NULL DEFAULT 'general',
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            action TEXT NOT NULL,
+            detail TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
+
+
+# === 사용자 설정 저장/로드 ===
+
+def save_user_setting(username: str, key: str, value: str):
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        "INSERT OR REPLACE INTO user_settings (username, setting_key, setting_value, updated_at) "
+        "VALUES (?, ?, ?, ?)",
+        (username, key, value, datetime.now().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_user_setting(username: str, key: str, default: str = None):
+    init_db()
+    conn = get_connection()
+    cursor = conn.execute(
+        "SELECT setting_value FROM user_settings WHERE username = ? AND setting_key = ?",
+        (username, key)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row["setting_value"] if row else default
+
+
+def load_all_user_settings(username: str) -> dict:
+    init_db()
+    conn = get_connection()
+    cursor = conn.execute(
+        "SELECT setting_key, setting_value FROM user_settings WHERE username = ?",
+        (username,)
+    )
+    settings = {row["setting_key"]: row["setting_value"] for row in cursor.fetchall()}
+    conn.close()
+    return settings
+
+
+# === 채팅 이력 저장/로드 ===
+
+def save_chat_message(username: str, chat_type: str, role: str, content: str):
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO chat_history (username, chat_type, role, content) VALUES (?, ?, ?, ?)",
+        (username, chat_type, role, content)
+    )
+    conn.commit()
+    conn.close()
+
+
+def load_chat_history(username: str, chat_type: str = "general", limit: int = 100) -> list:
+    init_db()
+    conn = get_connection()
+    cursor = conn.execute(
+        "SELECT role, content FROM chat_history WHERE username = ? AND chat_type = ? "
+        "ORDER BY id DESC LIMIT ?",
+        (username, chat_type, limit)
+    )
+    messages = [{"role": row["role"], "content": row["content"]} for row in cursor.fetchall()]
+    conn.close()
+    messages.reverse()
+    return messages
+
+
+def clear_chat_history(username: str, chat_type: str = "general"):
+    conn = get_connection()
+    conn.execute(
+        "DELETE FROM chat_history WHERE username = ? AND chat_type = ?",
+        (username, chat_type)
+    )
+    conn.commit()
+    conn.close()
+
+
+# === 활동 로그 ===
+
+def log_activity(username: str, action: str, detail: str = None):
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO activity_log (username, action, detail) VALUES (?, ?, ?)",
+        (username, action, detail)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_activity_log(username: str, limit: int = 50) -> pd.DataFrame:
+    init_db()
+    conn = get_connection()
+    df = pd.read_sql_query(
+        "SELECT action, detail, created_at FROM activity_log WHERE username = ? "
+        "ORDER BY id DESC LIMIT ?",
+        conn, params=(username, limit)
+    )
+    conn.close()
+    return df
 
 
 # === 워치리스트 ===

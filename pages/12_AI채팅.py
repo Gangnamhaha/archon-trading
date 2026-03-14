@@ -3,11 +3,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 import streamlit.components.v1 as components
-from config.styles import inject_pro_css
+from config.styles import inject_pro_css, load_user_preferences, save_user_preferences
 from config.auth import require_auth
+from data.database import save_chat_message, load_chat_history, clear_chat_history
 
 st.set_page_config(page_title="AI Chat", page_icon="💬", layout="wide")
-require_auth()
+user = require_auth()
+username = user["username"]
 inject_pro_css()
 st.title("💬 AI 채팅")
 
@@ -25,14 +27,27 @@ def tts_speak(text: str, lang: str = "ko-KR"):
     """, height=0)
 
 
-if "chat_messages" not in st.session_state:
-    st.session_state["chat_messages"] = []
+chat_settings = load_user_preferences(username, "ai_chat")
+
+if "chat_messages" not in st.session_state or not st.session_state["chat_messages"]:
+    st.session_state["chat_messages"] = load_chat_history(username, "general")
 if "openai_api_key" not in st.session_state:
     st.session_state["openai_api_key"] = ""
 if "tts_enabled" not in st.session_state:
-    st.session_state["tts_enabled"] = False
+    st.session_state["tts_enabled"] = bool(chat_settings.get("tts_enabled", False))
 if "stt_text" not in st.session_state:
     st.session_state["stt_text"] = ""
+if "chat_model" not in st.session_state:
+    st.session_state["chat_model"] = chat_settings.get("model", "gpt-4o-mini")
+if "chat_temp" not in st.session_state:
+    st.session_state["chat_temp"] = float(chat_settings.get("temperature", 0.7))
+if "chat_system" not in st.session_state:
+    st.session_state["chat_system"] = chat_settings.get(
+        "system_prompt",
+        "당신은 주식 투자와 금융 분야에 전문적인 AI 어시스턴트입니다. 한국어로 답변하세요.",
+    )
+if "tts_toggle" not in st.session_state:
+    st.session_state["tts_toggle"] = st.session_state["tts_enabled"]
 
 with st.sidebar:
     st.subheader("API 설정")
@@ -57,7 +72,18 @@ with st.sidebar:
     st.markdown("---")
     if st.button("대화 초기화", use_container_width=True, key="chat_clear"):
         st.session_state["chat_messages"] = []
+        clear_chat_history(username, "general")
         st.rerun()
+
+chat_pref_payload = {
+    "model": model,
+    "temperature": float(temperature),
+    "system_prompt": system_prompt,
+    "tts_enabled": bool(st.session_state["tts_enabled"]),
+}
+if st.session_state.get("_chat_pref_payload") != chat_pref_payload:
+    save_user_preferences(username, "ai_chat", chat_pref_payload)
+    st.session_state["_chat_pref_payload"] = chat_pref_payload
 
 if not st.session_state["openai_api_key"]:
     st.info("좌측 사이드바에서 OpenAI API Key를 입력하세요.")
@@ -109,6 +135,7 @@ if st.session_state["stt_text"] and not prompt:
     st.session_state["stt_text"] = ""
 
     st.session_state["chat_messages"].append({"role": "user", "content": prompt_value})
+    save_chat_message(username, "general", "user", prompt_value)
     with st.chat_message("user"):
         st.markdown(prompt_value)
 
@@ -127,6 +154,7 @@ if st.session_state["stt_text"] and not prompt:
                 reply = response.choices[0].message.content
             st.markdown(reply)
             st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
+            save_chat_message(username, "general", "assistant", reply)
             if st.session_state["tts_enabled"]:
                 tts_speak(reply)
         except Exception as e:
@@ -135,6 +163,7 @@ if st.session_state["stt_text"] and not prompt:
 
 elif prompt:
     st.session_state["chat_messages"].append({"role": "user", "content": prompt})
+    save_chat_message(username, "general", "user", prompt)
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -153,6 +182,7 @@ elif prompt:
                 reply = response.choices[0].message.content
             st.markdown(reply)
             st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
+            save_chat_message(username, "general", "assistant", reply)
             if st.session_state["tts_enabled"]:
                 tts_speak(reply)
         except Exception as e:

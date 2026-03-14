@@ -11,11 +11,12 @@ from trading.nh_api import NHApi
 from trading.strategy import AVAILABLE_STRATEGIES
 from data.fetcher import fetch_kr_stock
 from data.database import add_trade, get_trades
-from config.styles import inject_pro_css
+from config.styles import inject_pro_css, load_user_preferences, save_user_preferences
 from config.auth import require_pro
 
 st.set_page_config(page_title="자동매매", page_icon="🤖", layout="wide")
-require_pro()
+user = require_pro()
+username = user["username"]
 inject_pro_css()
 st.title("🤖 자동매매 봇")
 
@@ -35,6 +36,21 @@ if "auto_trading" not in st.session_state:
     st.session_state["auto_trading"] = False
 if "trade_log" not in st.session_state:
     st.session_state["trade_log"] = []
+
+autopilot_defaults = {
+    "ap_capital": 1_000_000,
+    "ap_market": "KOSPI",
+    "ap_mode": "일반 추천",
+    "ap_max_stocks": 5,
+    "ap_max_per_stock": 20,
+    "ap_stop_loss": 5,
+    "ap_take_profit": 15,
+    "ap_daily_limit": 5,
+}
+autopilot_saved = load_user_preferences(username, "autopilot")
+for key, default in autopilot_defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = autopilot_saved.get(key, default)
 
 BROKER_OPTIONS = {
     "한국투자증권 (KIS)": "KIS",
@@ -371,6 +387,21 @@ if api:
             "🛑 오토파일럿 중지" if st.session_state["autopilot_running"] else "🚀 오토파일럿 시작",
             type="primary", use_container_width=True, key="ap_toggle"
         ):
+            if not st.session_state["autopilot_running"]:
+                save_user_preferences(
+                    username,
+                    "autopilot",
+                    {
+                        "ap_capital": int(st.session_state["ap_capital"]),
+                        "ap_market": st.session_state["ap_market"],
+                        "ap_mode": st.session_state["ap_mode"],
+                        "ap_max_stocks": int(st.session_state["ap_max_stocks"]),
+                        "ap_max_per_stock": int(st.session_state["ap_max_per_stock"]),
+                        "ap_stop_loss": int(st.session_state["ap_stop_loss"]),
+                        "ap_take_profit": int(st.session_state["ap_take_profit"]),
+                        "ap_daily_limit": int(st.session_state["ap_daily_limit"]),
+                    },
+                )
             st.session_state["autopilot_running"] = not st.session_state["autopilot_running"]
             if not st.session_state["autopilot_running"]:
                 st.success("오토파일럿이 중지되었습니다.")
