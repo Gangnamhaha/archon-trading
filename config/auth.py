@@ -415,6 +415,7 @@ def _show_login_form():
         with st.form("login_form"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
+            session_label = st.selectbox("세션 유지 시간", list(_SESSION_TIMEOUT_OPTIONS.keys()), index=2, key="session_timeout_sel")
             agree = st.checkbox("이용약관 및 개인정보처리방침에 동의합니다", key="login_agree")
             submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
 
@@ -428,23 +429,37 @@ def _show_login_form():
                     if user:
                         st.session_state["authenticated"] = True
                         st.session_state["user"] = user
+                        st.session_state["_login_time"] = datetime.now()
+                        st.session_state["_session_timeout"] = _SESSION_TIMEOUT_OPTIONS[session_label]
                         st.rerun()
                     else:
                         st.error("아이디 또는 비밀번호가 틀렸습니다.")
 
 
+_SESSION_TIMEOUT_OPTIONS = {
+    "1시간": 3600,
+    "6시간": 21600,
+    "24시간": 86400,
+    "7일": 604800,
+    "무제한": 0,
+}
+
+
 def _check_session_expiry():
-    from datetime import datetime, timedelta
+    timeout = st.session_state.get("_session_timeout", 86400)
+    if timeout == 0:
+        return
     login_time = st.session_state.get("_login_time")
     if login_time:
         elapsed = (datetime.now() - login_time).total_seconds()
-        if elapsed > 86400:
+        if elapsed > timeout:
             st.session_state.clear()
             st.warning("세션이 만료되었습니다. 다시 로그인해주세요.")
             st.rerun()
 
 
 def require_auth():
+    _check_session_expiry()
     if not st.session_state.get("authenticated", False):
         _show_login_form()
         st.stop()
