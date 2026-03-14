@@ -332,6 +332,187 @@ if api:
 
     st.markdown("---")
 
+    # ===================================================================
+    # 오토파일럿 모드
+    # ===================================================================
+    st.subheader("🚀 오토파일럿 모드")
+    st.caption("AI가 종목 추천 → 자동 선택 → 포지션 사이징 → 매수/매도를 모두 자동 수행합니다.")
+
+    if "autopilot_running" not in st.session_state:
+        st.session_state["autopilot_running"] = False
+    if "autopilot_holdings" not in st.session_state:
+        st.session_state["autopilot_holdings"] = {}
+
+    with st.expander("오토파일럿 설정", expanded=not st.session_state["autopilot_running"]):
+        ap_col1, ap_col2 = st.columns(2)
+        with ap_col1:
+            ap_capital = st.number_input("투자금 (원)", min_value=100_000, value=1_000_000, step=100_000, key="ap_capital", format="%d")
+            ap_market = st.selectbox("시장", ["KOSPI", "KOSDAQ"], key="ap_market")
+            ap_mode = st.selectbox("추천 모드", ["일반 추천", "🔥 공격적 추천"], key="ap_mode")
+        with ap_col2:
+            ap_max_stocks = st.slider("최대 보유 종목 수", 1, 10, 5, key="ap_max_stocks")
+            ap_max_per_stock = st.slider("종목당 최대 비중 (%)", 10, 50, 20, key="ap_max_per_stock")
+            ap_stop_loss = st.slider("종목별 손절선 (%)", 1, 20, 5, key="ap_stop_loss")
+        ap_col3, ap_col4 = st.columns(2)
+        with ap_col3:
+            ap_take_profit = st.slider("종목별 익절선 (%)", 5, 50, 15, key="ap_take_profit")
+        with ap_col4:
+            ap_daily_loss_limit = st.slider("일일 최대 손실 한도 (%)", 1, 20, 5, key="ap_daily_limit")
+
+        st.warning(
+            f"⚠️ 투자금 {ap_capital:,}원 중 최대 {ap_max_stocks}종목에 분배 투자합니다. "
+            f"종목당 최대 {ap_max_per_stock}%, 손절 -{ap_stop_loss}%, 익절 +{ap_take_profit}%. "
+            f"일일 손실이 -{ap_daily_loss_limit}% 도달 시 전체 자동 중지됩니다."
+        )
+
+    ap_btn_col1, ap_btn_col2 = st.columns(2)
+    with ap_btn_col1:
+        if st.button(
+            "🛑 오토파일럿 중지" if st.session_state["autopilot_running"] else "🚀 오토파일럿 시작",
+            type="primary", use_container_width=True, key="ap_toggle"
+        ):
+            st.session_state["autopilot_running"] = not st.session_state["autopilot_running"]
+            if not st.session_state["autopilot_running"]:
+                st.success("오토파일럿이 중지되었습니다.")
+            st.rerun()
+    with ap_btn_col2:
+        if st.button("📊 1회 스캔 (테스트)", use_container_width=True, key="ap_scan_once"):
+            with st.spinner("AI 종목 스캔 중..."):
+                try:
+                    if ap_mode == "🔥 공격적 추천":
+                        from analysis.recommender import recommend_aggressive_stocks
+                        scan_df = recommend_aggressive_stocks(market=ap_market, top_n=100, result_count=ap_max_stocks)
+                        score_col = "공격점수"
+                    else:
+                        from analysis.recommender import recommend_stocks
+                        scan_df = recommend_stocks(market=ap_market, top_n=50, result_count=ap_max_stocks)
+                        score_col = "종합점수"
+
+                    if scan_df.empty:
+                        st.error("스캔 결과가 없습니다.")
+                    else:
+                        st.success(f"{len(scan_df)}개 종목 발견")
+
+                        per_stock_capital = int(ap_capital / len(scan_df))
+                        plan_data = []
+                        for _, row in scan_df.iterrows():
+                            price = int(row["현재가"])
+                            qty = max(1, per_stock_capital // price) if price > 0 else 0
+                            alloc_pct = round(qty * price / ap_capital * 100, 1)
+                            plan_data.append({
+                                "종목코드": row["종목코드"],
+                                "종목명": row["종목명"],
+                                "현재가": f"{price:,}",
+                                "점수": round(row[score_col], 1),
+                                "매수수량": qty,
+                                "투자금": f"{qty * price:,}",
+                                "비중(%)": alloc_pct,
+                                "손절가": f"{int(price * (1 - ap_stop_loss / 100)):,}",
+                                "익절가": f"{int(price * (1 + ap_take_profit / 100)):,}",
+                            })
+                        plan_df = pd.DataFrame(plan_data)
+                        st.dataframe(plan_df, use_container_width=True, hide_index=True)
+
+                        total_invest = sum(int(r["투자금"].replace(",", "")) for r in plan_data)
+                        remaining = ap_capital - total_invest
+                        ic1, ic2, ic3 = st.columns(3)
+                        ic1.metric("총 투자금", f"{total_invest:,}원")
+                        ic2.metric("잔여 현금", f"{remaining:,}원")
+                        ic3.metric("투자 종목", f"{len(plan_data)}개")
+                except Exception as e:
+                    st.error(f"스캔 실패: {e}")
+
+    if st.session_state["autopilot_running"]:
+        import time as _ap_time
+
+        st.success("🚀 오토파일럿 동작 중...")
+
+        try:
+            if ap_mode == "🔥 공격적 추천":
+                from analysis.recommender import recommend_aggressive_stocks
+                scan_df = recommend_aggressive_stocks(market=ap_market, top_n=100, result_count=ap_max_stocks)
+                score_col = "공격점수"
+            else:
+                from analysis.recommender import recommend_stocks
+                scan_df = recommend_stocks(market=ap_market, top_n=50, result_count=ap_max_stocks)
+                score_col = "종합점수"
+
+            if not scan_df.empty:
+                now_str = datetime.now().strftime("%H:%M:%S")
+                holdings = st.session_state.get("autopilot_holdings", {})
+                daily_pnl = 0.0
+
+                for _, row in scan_df.iterrows():
+                    ticker = row["종목코드"]
+                    price = int(row["현재가"])
+
+                    if ticker in holdings:
+                        entry = holdings[ticker]
+                        pnl_pct = (price / entry["avg_price"] - 1) * 100
+                        daily_pnl += pnl_pct * entry["qty"] * entry["avg_price"] / ap_capital * 100
+
+                        if pnl_pct <= -ap_stop_loss:
+                            result = api.sell_order(ticker, entry["qty"], 0)
+                            log_msg = f"[{now_str}] AP 손절: {row['종목명']} {pnl_pct:+.1f}% → {result.get('status', 'unknown')}"
+                            st.session_state["trade_log"].append(log_msg)
+                            if result.get("status") == "success":
+                                add_trade(ticker, "KR", "SELL", 0, entry["qty"], f"오토파일럿 손절 ({pnl_pct:+.1f}%)")
+                            del holdings[ticker]
+                        elif pnl_pct >= ap_take_profit:
+                            result = api.sell_order(ticker, entry["qty"], 0)
+                            log_msg = f"[{now_str}] AP 익절: {row['종목명']} {pnl_pct:+.1f}% → {result.get('status', 'unknown')}"
+                            st.session_state["trade_log"].append(log_msg)
+                            if result.get("status") == "success":
+                                add_trade(ticker, "KR", "SELL", 0, entry["qty"], f"오토파일럿 익절 ({pnl_pct:+.1f}%)")
+                            del holdings[ticker]
+                    else:
+                        if len(holdings) < ap_max_stocks:
+                            per_stock = int(ap_capital * ap_max_per_stock / 100)
+                            qty = max(1, per_stock // price) if price > 0 else 0
+                            if qty > 0:
+                                result = api.buy_order(ticker, qty, 0)
+                                log_msg = f"[{now_str}] AP 매수: {row['종목명']} x{qty} @{price:,} → {result.get('status', 'unknown')}"
+                                st.session_state["trade_log"].append(log_msg)
+                                if result.get("status") == "success":
+                                    add_trade(ticker, "KR", "BUY", price, qty, f"오토파일럿 매수 (점수:{row[score_col]:+.1f})")
+                                    holdings[ticker] = {"avg_price": price, "qty": qty, "name": row["종목명"]}
+
+                st.session_state["autopilot_holdings"] = holdings
+
+                daily_loss_pct = daily_pnl
+                if daily_loss_pct <= -ap_daily_loss_limit:
+                    st.session_state["autopilot_running"] = False
+                    st.error(f"⚠️ 일일 손실 한도 도달 ({daily_loss_pct:.1f}%). 오토파일럿 자동 중지.")
+                    for t, h in list(holdings.items()):
+                        api.sell_order(t, h["qty"], 0)
+                        st.session_state["trade_log"].append(f"[{now_str}] AP 긴급매도: {h['name']} x{h['qty']}")
+                    st.session_state["autopilot_holdings"] = {}
+
+                if holdings:
+                    st.markdown("##### 현재 오토파일럿 보유 종목")
+                    hold_data = []
+                    for t, h in holdings.items():
+                        current = api.get_price(t)
+                        cur_price = current.get("현재가", h["avg_price"]) if "error" not in current else h["avg_price"]
+                        pnl = (cur_price / h["avg_price"] - 1) * 100
+                        hold_data.append({
+                            "종목명": h["name"], "매수가": f"{h['avg_price']:,}",
+                            "현재가": f"{cur_price:,}", "수량": h["qty"],
+                            "수익률(%)": f"{pnl:+.1f}",
+                        })
+                    st.dataframe(pd.DataFrame(hold_data), use_container_width=True, hide_index=True)
+            else:
+                st.session_state["trade_log"].append(f"[{datetime.now().strftime('%H:%M:%S')}] AP: 스캔 결과 없음")
+
+        except Exception as e:
+            st.session_state["trade_log"].append(f"[{datetime.now().strftime('%H:%M:%S')}] AP 오류: {e}")
+            st.error(f"오토파일럿 오류: {e}")
+
+        _ap_time.sleep(300)
+        st.rerun()
+
+    st.markdown("---")
+
     st.subheader("거래 로그")
     if st.session_state["trade_log"]:
         for log in reversed(st.session_state["trade_log"][-20:]):
