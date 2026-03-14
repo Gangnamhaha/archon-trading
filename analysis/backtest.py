@@ -5,6 +5,7 @@
 """
 import pandas as pd
 import numpy as np
+from itertools import product
 from analysis.technical import calc_sma, calc_rsi, calc_macd, calc_bollinger
 
 
@@ -281,3 +282,108 @@ STRATEGIES = {
     "변동성 돌파 전략": volatility_breakout_strategy,
     "공격적 모멘텀 전략": aggressive_momentum_strategy,
 }
+
+
+def optimize_strategy_params(
+    df: pd.DataFrame,
+    strategy_type: str,
+    param_grid: dict,
+    initial_capital: float = 10_000_000,
+) -> dict:
+    strategy_alias = {
+        "RSI": "RSI 전략",
+        "골든크로스": "골든크로스/데드크로스",
+        "볼린저밴드": "볼린저밴드 전략",
+        "변동성 돌파": "변동성 돌파 전략",
+    }
+    default_param_grids = {
+        "RSI 전략": {
+            "buy_threshold": [20, 25, 30, 35],
+            "sell_threshold": [65, 70, 75, 80],
+        },
+        "골든크로스/데드크로스": {
+            "short": [3, 5, 10],
+            "long": [15, 20, 30, 60],
+        },
+        "볼린저밴드 전략": {
+            "period": [15, 20, 25],
+            "std_dev": [1.5, 2.0, 2.5],
+        },
+        "변동성 돌파 전략": {
+            "k": [0.3, 0.4, 0.5, 0.6, 0.7],
+            "stop_loss": [1.5, 2.0, 3.0],
+        },
+    }
+
+    strategy_key = strategy_alias.get(strategy_type, strategy_type)
+    strategy_func = STRATEGIES.get(strategy_key)
+    if strategy_func is None:
+        return {"best_params": {}, "best_sharpe": 0.0, "all_results": []}
+
+    grid = param_grid or default_param_grids.get(strategy_key, {})
+    if not grid:
+        return {"best_params": {}, "best_sharpe": 0.0, "all_results": []}
+
+    param_keys = list(grid.keys())
+    all_results = []
+    for values in product(*[grid[k] for k in param_keys]):
+        params = dict(zip(param_keys, values))
+
+        if "short" in params and "long" in params and params["short"] >= params["long"]:
+            continue
+
+        strategy_params = params.copy()
+        if strategy_key == "변동성 돌파 전략" and "stop_loss" in strategy_params:
+            strategy_params.pop("stop_loss")
+
+        try:
+            if strategy_key == "골든크로스/데드크로스":
+                signals = golden_cross_strategy(
+                    df,
+                    short=int(strategy_params.get("short", 5)),
+                    long=int(strategy_params.get("long", 20)),
+                )
+            elif strategy_key == "RSI 전략":
+                signals = rsi_strategy(
+                    df,
+                    buy_threshold=int(strategy_params.get("buy_threshold", 30)),
+                    sell_threshold=int(strategy_params.get("sell_threshold", 70)),
+                )
+            elif strategy_key == "볼린저밴드 전략":
+                signals = bollinger_strategy(
+                    df,
+                    period=int(strategy_params.get("period", 20)),
+                    std_dev=float(strategy_params.get("std_dev", 2.0)),
+                )
+            elif strategy_key == "변동성 돌파 전략":
+                signals = volatility_breakout_strategy(
+                    df,
+                    k=float(strategy_params.get("k", 0.5)),
+                )
+            else:
+                signals = strategy_func(df)
+
+            engine = BacktestEngine(df, initial_capital=initial_capital)
+            results = engine.run(signals)
+
+            sharpe = float(results.get("샤프 비율", 0))
+            all_results.append({
+                "params": params,
+                "sharpe": sharpe,
+                "total_return": float(results.get("총 수익률 (%)", 0)),
+                "mdd": float(results.get("최대 낙폭 MDD (%)", 0)),
+                "trades": int(results.get("총 거래 횟수", 0)),
+            })
+        except Exception:
+            continue
+
+    if not all_results:
+        return {"best_params": {}, "best_sharpe": 0.0, "all_results": []}
+
+    all_results = sorted(all_results, key=lambda x: x["sharpe"], reverse=True)
+    best = all_results[0]
+    return {
+        "best_params": best["params"],
+        "best_sharpe": float(best["sharpe"]),
+        "all_results": all_results,
+    }

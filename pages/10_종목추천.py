@@ -28,11 +28,13 @@ else:
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    market = st.selectbox("시장", ["KOSPI", "KOSDAQ"])
+    market = st.selectbox("시장", ["KOSPI", "KOSDAQ"]) or "KOSPI"
 with col2:
     scan_count = st.selectbox("스캔 종목 수", [30, 50, 100, 200], index=2 if rec_mode == "🔥 공격적 추천" else 1)
+    scan_count = int(scan_count or (100 if rec_mode == "🔥 공격적 추천" else 50))
 with col3:
     result_count = st.selectbox("추천 표시 수", [10, 20, 30], index=1)
+    result_count = int(result_count or 20)
 
 if st.button("종목 추천 시작", type="primary", use_container_width=True):
     if rec_mode == "🔥 공격적 추천":
@@ -307,5 +309,80 @@ if "recommend_result" in st.session_state:
     | **추세 일관성** | 15% | 최근 10일간 5일선이 20일선 위에 있는 비율 |
     | **변동성 패널티** | 10% | 연환산 변동성이 높을수록 감점 |
     """)
+
+    with st.expander("🧠 추천 가중치 자동 학습", expanded=False):
+        st.caption("💎 Pro 전용 기능")
+        if st.button("가중치 학습", use_container_width=True, key="learn_optimal_weights"):
+            progress_bar = st.progress(0)
+            progress_bar.progress(15)
+            with st.spinner("가중치 조합을 학습 중입니다..."):
+                from analysis.recommender import learn_optimal_weights
+                learn_market = market_label if isinstance(market_label, str) and market_label else market
+                learn_result = learn_optimal_weights(
+                    market=learn_market,
+                    lookback_days=60,
+                    top_n=min(max(scan_count, 30), 200),
+                )
+            progress_bar.progress(100)
+            st.session_state["weight_learning_result"] = learn_result
+
+        if "weight_learning_result" in st.session_state:
+            learn_result = st.session_state["weight_learning_result"]
+            if "error" in learn_result:
+                st.warning(learn_result["error"])
+            else:
+                default_w = learn_result.get("default_weights", {})
+                optimal_w = learn_result.get("optimal_weights", {})
+                compare_df = pd.DataFrame([
+                    {
+                        "팩터": "기술지표",
+                        "현재": default_w.get("tech_w", 0),
+                        "학습": optimal_w.get("tech_w", 0),
+                    },
+                    {
+                        "팩터": "모멘텀",
+                        "현재": default_w.get("mom_w", 0),
+                        "학습": optimal_w.get("mom_w", 0),
+                    },
+                    {
+                        "팩터": "거래량",
+                        "현재": default_w.get("vol_w", 0),
+                        "학습": optimal_w.get("vol_w", 0),
+                    },
+                    {
+                        "팩터": "추세일관성",
+                        "현재": default_w.get("trend_w", 0),
+                        "학습": optimal_w.get("trend_w", 0),
+                    },
+                    {
+                        "팩터": "변동성 패널티",
+                        "현재": default_w.get("vol_penalty_w", 0),
+                        "학습": optimal_w.get("vol_penalty_w", 0),
+                    },
+                ])
+
+                c1, c2, c3 = st.columns(3)
+                comp = learn_result.get("comparison", {})
+                c1.metric("기본 조합 기대수익", f"{comp.get('default_top_return', 0):+.2f}%")
+                c2.metric("학습 조합 기대수익", f"{comp.get('optimized_top_return', 0):+.2f}%")
+                c3.metric("개선폭", f"{comp.get('improvement', 0):+.2f}%")
+
+                st.dataframe(compare_df.style.format({"현재": "{:.2f}", "학습": "{:.2f}"}), use_container_width=True, hide_index=True)
+
+                all_results = learn_result.get("all_results", [])
+                if all_results:
+                    top_rows = []
+                    for item in all_results[:5]:
+                        w = item.get("weights", {})
+                        top_rows.append({
+                            "tech_w": w.get("tech_w", 0),
+                            "mom_w": w.get("mom_w", 0),
+                            "vol_w": w.get("vol_w", 0),
+                            "trend_w": w.get("trend_w", 0),
+                            "top_return(%)": item.get("top_return", 0),
+                            "corr": item.get("corr", 0),
+                        })
+                    st.markdown("**상위 5개 가중치 조합**")
+                    st.dataframe(pd.DataFrame(top_rows), use_container_width=True, hide_index=True)
 
 show_legal_disclaimer()

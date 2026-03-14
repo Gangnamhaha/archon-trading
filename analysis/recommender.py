@@ -3,6 +3,7 @@ import numpy as np
 from typing import Optional
 from pykrx import stock as krx
 from datetime import datetime, timedelta
+from itertools import product
 from analysis.technical import (
     calc_rsi, calc_macd, calc_sma, calc_bollinger,
     calc_stochastic, calc_adx, calc_williams_r, get_signal_summary,
@@ -285,3 +286,149 @@ def recommend_aggressive_stocks(
     result_df = result_df.reset_index(drop=True)
     result_df.index = result_df.index + 1
     return result_df
+
+
+def learn_optimal_weights(
+    market: str = "KOSPI",
+    lookback_days: int = 60,
+    top_n: int = 50,
+) -> dict:
+    default_weights = {
+        "tech_w": 0.35,
+        "mom_w": 0.25,
+        "vol_w": 0.15,
+        "trend_w": 0.15,
+        "vol_penalty_w": 0.10,
+    }
+
+    tech_weights = [0.2, 0.3, 0.4]
+    mom_weights = [0.15, 0.25, 0.35]
+    vol_weights = [0.1, 0.15, 0.2]
+    trend_weights = [0.1, 0.15, 0.2]
+
+    now = datetime.now()
+    start_date = now - timedelta(days=max(lookback_days + 140, 220))
+    eval_date = now - timedelta(days=lookback_days)
+    end_str = now.strftime("%Y%m%d")
+    start_str = start_date.strftime("%Y%m%d")
+
+    tickers = []
+    for offset in range(10):
+        probe = (eval_date - timedelta(days=offset)).strftime("%Y%m%d")
+        tickers = krx.get_market_ticker_list(probe, market=market)
+        if tickers:
+            break
+
+    tickers = tickers[:top_n]
+    if not tickers:
+        return {
+            "error": "학습 대상 종목이 없습니다.",
+            "optimal_weights": default_weights,
+            "default_weights": default_weights,
+            "all_results": [],
+        }
+
+    samples = []
+    for ticker in tickers:
+        try:
+            ohlcv = krx.get_market_ohlcv(start_str, end_str, ticker)
+            if ohlcv.empty:
+                continue
+
+            df = ohlcv.rename(columns={
+                "시가": "Open", "고가": "High", "저가": "Low",
+                "종가": "Close", "거래량": "Volume"
+            })
+            df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+            if len(df) < 90:
+                continue
+
+            past_df = df[df.index <= eval_date]
+            future_df = df[df.index > eval_date]
+            if len(past_df) < 60 or future_df.empty:
+                continue
+
+            ind_df = _calc_all_indicators(past_df)
+            tech_info = get_signal_summary(ind_df)
+
+            close_past = float(past_df["Close"].iloc[-1])
+            close_now = float(future_df["Close"].iloc[-1])
+            future_return = (close_now / close_past - 1) * 100
+
+            samples.append({
+                "ticker": ticker,
+                "tech_score": float(tech_info.get("score", 0)),
+                "mom_score": float(_momentum_score(past_df)),
+                "vol_score": float(_volume_score(past_df)),
+                "trend_score": float(_trend_consistency_score(past_df)),
+                "vol_penalty": float(_volatility_penalty(past_df)),
+                "future_return": float(future_return),
+            })
+        except Exception:
+            continue
+
+    if len(samples) < 10:
+        return {
+            "error": "학습 가능한 종목 수가 부족합니다.",
+            "optimal_weights": default_weights,
+            "default_weights": default_weights,
+            "stock_count": len(samples),
+            "all_results": [],
+        }
+
+    sample_df = pd.DataFrame(samples)
+    top_bucket = max(5, min(20, int(len(sample_df) * 0.2)))
+
+    def evaluate(weights: dict) -> dict:
+        score = (
+            sample_df["tech_score"] * weights["tech_w"]
+            + sample_df["mom_score"] * weights["mom_w"]
+            + sample_df["vol_score"] * weights["vol_w"]
+            + sample_df["trend_score"] * weights["trend_w"]
+            + sample_df["vol_penalty"] * weights["vol_penalty_w"]
+        )
+
+        ranked = sample_df.assign(pred_score=score).sort_values("pred_score", ascending=False)
+        top_return = float(ranked.head(top_bucket)["future_return"].mean())
+        corr = float(ranked["pred_score"].corr(ranked["future_return"]))
+        if pd.isna(corr):
+            corr = 0.0
+
+        return {
+            "weights": weights,
+            "top_return": round(top_return, 4),
+            "corr": round(corr, 4),
+        }
+
+    combo_results = []
+    for tech_w, mom_w, vol_w, trend_w in product(tech_weights, mom_weights, vol_weights, trend_weights):
+        w = {
+            "tech_w": tech_w,
+            "mom_w": mom_w,
+            "vol_w": vol_w,
+            "trend_w": trend_w,
+            "vol_penalty_w": default_weights["vol_penalty_w"],
+        }
+        combo_results.append(evaluate(w))
+
+    combo_results = sorted(combo_results, key=lambda x: (x["top_return"], x["corr"]), reverse=True)
+    best = combo_results[0]
+    default_eval = evaluate(default_weights)
+
+    improvement = best["top_return"] - default_eval["top_return"]
+    return {
+        "market": market,
+        "lookback_days": lookback_days,
+        "stock_count": int(len(sample_df)),
+        "top_bucket": int(top_bucket),
+        "optimal_weights": best["weights"],
+        "default_weights": default_weights,
+        "comparison": {
+            "default_top_return": float(default_eval["top_return"]),
+            "optimized_top_return": float(best["top_return"]),
+            "improvement": float(round(improvement, 4)),
+            "default_corr": float(default_eval["corr"]),
+            "optimized_corr": float(best["corr"]),
+        },
+        "all_results": combo_results,
+    }

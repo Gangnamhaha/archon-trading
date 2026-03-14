@@ -297,6 +297,179 @@ def predict_mlp_neural(df: pd.DataFrame, forecast_days: int = 30) -> dict:
         return {"error": str(e)}
 
 
+def predict_lstm(df: pd.DataFrame, forecast_days: int = 30) -> dict:
+    try:
+        close = df["Close"].dropna().astype(float)
+        if len(close) < 120:
+            return {"error": "최소 120일 데이터 필요"}
+
+        volume = df["Volume"].reindex(close.index).astype(float)
+
+        feature_df = pd.DataFrame(index=close.index)
+        feature_df["ret_1d"] = close.pct_change()
+        feature_df["ret_5d"] = close.pct_change(5)
+        feature_df["ret_20d"] = close.pct_change(20)
+        feature_df["sma_5_ratio"] = close.rolling(5).mean() / close - 1
+        feature_df["sma_20_ratio"] = close.rolling(20).mean() / close - 1
+        feature_df["sma_60_ratio"] = close.rolling(60).mean() / close - 1
+        feature_df["rsi"] = _calc_rsi_series(close, 14) / 100
+        feature_df["vol_ratio"] = volume / volume.rolling(20).mean()
+
+        feature_df = feature_df.replace([np.inf, -np.inf], np.nan).dropna()
+        if len(feature_df) < 100:
+            return {"error": "특성 데이터 부족"}
+
+        target = (close.shift(-forecast_days) / close - 1).reindex(feature_df.index)
+        train_df = feature_df.copy()
+        train_df["target"] = target
+        train_df = train_df.dropna()
+
+        lookback_window = 60
+        if len(train_df) <= lookback_window + 10:
+            return {"error": "학습 데이터 부족"}
+        if len(feature_df) < lookback_window:
+            return {"error": "최근 시퀀스 데이터 부족"}
+
+        features = [
+            "ret_1d", "ret_5d", "ret_20d",
+            "sma_5_ratio", "sma_20_ratio", "sma_60_ratio",
+            "rsi", "vol_ratio",
+        ]
+
+        X_raw = train_df[features].values.astype(np.float64)
+        y_raw = train_df["target"].values.astype(np.float64)
+
+        x_mean = X_raw.mean(axis=0)
+        x_std = X_raw.std(axis=0)
+        x_std[x_std == 0] = 1.0
+        X_scaled = (X_raw - x_mean) / x_std
+
+        y_mean = float(y_raw.mean())
+        y_std = float(y_raw.std())
+        if y_std == 0:
+            y_std = 1.0
+        y_scaled = (y_raw - y_mean) / y_std
+
+        sequences = []
+        targets = []
+        for i in range(lookback_window, len(train_df)):
+            sequences.append(X_scaled[i - lookback_window:i])
+            targets.append(y_scaled[i])
+
+        if len(sequences) < 20:
+            return {"error": "시퀀스 학습 샘플 부족"}
+
+        X_seq = np.asarray(sequences, dtype=np.float64)
+        y_seq = np.asarray(targets, dtype=np.float64)
+
+        n_features = X_seq.shape[2]
+        hidden_size = 32
+        rng = np.random.default_rng(42)
+
+        Wxh = rng.normal(0, 0.08, (n_features, hidden_size))
+        Whh = rng.normal(0, 0.08, (hidden_size, hidden_size))
+        bh = np.zeros(hidden_size, dtype=np.float64)
+        Why = rng.normal(0, 0.08, (hidden_size, 1))
+        by = np.zeros(1, dtype=np.float64)
+
+        def forward(seq: np.ndarray):
+            h_states = []
+            h_prev = np.zeros(hidden_size, dtype=np.float64)
+            for t in range(seq.shape[0]):
+                x_t = seq[t]
+                h_prev = np.tanh(x_t @ Wxh + h_prev @ Whh + bh)
+                h_states.append(h_prev.copy())
+            out = float(h_prev @ Why[:, 0] + by[0])
+            return out, h_states
+
+        epochs = 40
+        learning_rate = 0.008
+        max_samples = min(80, len(X_seq))
+
+        for _ in range(epochs):
+            order = rng.permutation(len(X_seq))[:max_samples]
+
+            dWxh = np.zeros_like(Wxh)
+            dWhh = np.zeros_like(Whh)
+            dbh = np.zeros_like(bh)
+            dWhy = np.zeros_like(Why)
+            dby = np.zeros_like(by)
+
+            for idx in order:
+                seq = X_seq[idx]
+                target_val = y_seq[idx]
+
+                pred, h_states = forward(seq)
+                grad_out = 2.0 * (pred - target_val)
+
+                dWhy[:, 0] += h_states[-1] * grad_out
+                dby[0] += grad_out
+
+                dh_next = Why[:, 0] * grad_out
+                for t in range(seq.shape[0] - 1, -1, -1):
+                    h_t = h_states[t]
+                    h_prev = h_states[t - 1] if t > 0 else np.zeros(hidden_size, dtype=np.float64)
+                    x_t = seq[t]
+
+                    dtanh = dh_next * (1.0 - h_t ** 2)
+                    dWxh += np.outer(x_t, dtanh)
+                    dWhh += np.outer(h_prev, dtanh)
+                    dbh += dtanh
+                    dh_next = dtanh @ Whh.T
+
+            scale = 1.0 / max(1, len(order))
+            for grad in (dWxh, dWhh, dbh, dWhy, dby):
+                np.clip(grad, -1.0, 1.0, out=grad)
+                grad *= scale
+
+            Wxh -= learning_rate * dWxh
+            Whh -= learning_rate * dWhh
+            bh -= learning_rate * dbh
+            Why -= learning_rate * dWhy
+            by -= learning_rate * dby
+
+        train_pred_scaled = np.array([forward(seq)[0] for seq in X_seq], dtype=np.float64)
+        train_pred = train_pred_scaled * y_std + y_mean
+        train_true = y_seq * y_std + y_mean
+
+        ss_res = float(np.sum((train_true - train_pred) ** 2))
+        ss_tot = float(np.sum((train_true - train_true.mean()) ** 2))
+        r2_score = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+        latest_seq_raw = feature_df[features].tail(lookback_window).values.astype(np.float64)
+        latest_seq = (latest_seq_raw - x_mean) / x_std
+        pred_scaled, _ = forward(latest_seq)
+        predicted_return = pred_scaled * y_std + y_mean
+        predicted_return = float(np.clip(predicted_return, -0.8, 1.5))
+
+        last_price = float(close.iloc[-1])
+        predicted_price = last_price * (1 + predicted_return)
+
+        forecast_prices = np.linspace(last_price, predicted_price, forecast_days)
+        forecast_idx = pd.date_range(close.index[-1], periods=forecast_days + 1, freq="B")[1:]
+
+        daily_vol = float(close.pct_change().dropna().std())
+        if not np.isfinite(daily_vol):
+            daily_vol = 0.02
+        std_range = daily_vol * np.sqrt(np.arange(1, forecast_days + 1)) * last_price
+        upper = forecast_prices + 1.96 * std_range
+        lower = forecast_prices - 1.96 * std_range
+
+        return {
+            "model": "Numpy LSTM-like",
+            "forecast": forecast_prices,
+            "forecast_index": forecast_idx,
+            "upper": upper,
+            "lower": lower,
+            "last_price": last_price,
+            "predicted_price": round(float(predicted_price), 0),
+            "predicted_return": round(float(predicted_return * 100), 2),
+            "r2_score": round(float(r2_score), 4),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def predict_ensemble(df: pd.DataFrame, forecast_days: int = 30) -> dict:
     results = {}
     models = {
@@ -305,6 +478,7 @@ def predict_ensemble(df: pd.DataFrame, forecast_days: int = 30) -> dict:
         "ML Regression": predict_ml_regression,
         "Gradient Boosting": predict_gradient_boosting,
         "MLP Neural Net": predict_mlp_neural,
+        "Numpy LSTM-like": predict_lstm,
     }
 
     valid_predictions = []
