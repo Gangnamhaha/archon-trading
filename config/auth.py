@@ -2,6 +2,7 @@ import sqlite3
 import hashlib
 import secrets
 import os
+from datetime import datetime, timedelta
 from typing import Optional
 import streamlit as st
 import pandas as pd
@@ -39,6 +40,16 @@ def _init_users_table():
     conn.execute("UPDATE users SET plan='pro' WHERE role='admin' AND plan='free'")
     conn.commit()
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_plan_meta (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER UNIQUE NOT NULL,
+            expires_at TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+
     cursor = conn.execute("SELECT COUNT(*) FROM users WHERE role='admin'")
     if cursor.fetchone()[0] == 0:
         salt = secrets.token_hex(16)
@@ -68,7 +79,7 @@ def _hash_password(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000).hex()
 
 
-def verify_user(username: str, password: str) -> Optional[dict]:
+def verify_user(username: str, password: str) -> Optional[dict[str, object]]:
     conn = _get_conn()
     row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     conn.close()
@@ -126,18 +137,81 @@ def get_all_users() -> pd.DataFrame:
 def update_user_plan(user_id: int, plan: str):
     conn = _get_conn()
     conn.execute("UPDATE users SET plan=? WHERE id=?", (plan, user_id))
+    if plan == "free":
+        conn.execute("DELETE FROM user_plan_meta WHERE user_id=?", (user_id,))
     conn.commit()
     conn.close()
+    _sync_session_user_plan(user_id, plan)
+
+
+def _sync_session_user_plan(user_id: int, plan: str):
+    session_user = st.session_state.get("user")
+    if session_user and session_user.get("id") == user_id:
+        session_user["plan"] = plan
+        st.session_state["user"] = session_user
+
+
+def get_plan_expiry(user_id: int) -> Optional[datetime]:
+    conn = _get_conn()
+    row = conn.execute("SELECT expires_at FROM user_plan_meta WHERE user_id=?", (user_id,)).fetchone()
+    conn.close()
+    if row is None or not row["expires_at"]:
+        return None
+    try:
+        return datetime.fromisoformat(row["expires_at"])
+    except ValueError:
+        return None
+
+
+def grant_pro_days(user_id: int, days: int):
+    now = datetime.now()
+    current_expiry = get_plan_expiry(user_id)
+    base_time = current_expiry if current_expiry and current_expiry > now else now
+    new_expiry = base_time + timedelta(days=days)
+
+    conn = _get_conn()
+    conn.execute("UPDATE users SET plan='pro' WHERE id=?", (user_id,))
+    conn.execute(
+        """
+        INSERT INTO user_plan_meta (user_id, expires_at, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            expires_at=excluded.expires_at,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (user_id, new_expiry.isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    _sync_session_user_plan(user_id, "pro")
 
 
 def is_admin() -> bool:
     return st.session_state.get("user", {}).get("role") == "admin"
 
 
-def is_pro(user: Optional[dict] = None) -> bool:
+def is_pro(user: Optional[dict[str, object]] = None) -> bool:
     if user is None:
         user = st.session_state.get("user", {})
-    return user.get("plan") == "pro" or user.get("role") == "admin"
+    current_user = user or {}
+    if current_user.get("role") == "admin":
+        return True
+
+    if current_user.get("plan") != "pro":
+        return False
+
+    user_id = current_user.get("id")
+    if user_id is None:
+        return True
+
+    if not isinstance(user_id, int):
+        return False
+
+    expiry = get_plan_expiry(user_id)
+    if expiry and expiry < datetime.now():
+        update_user_plan(user_id, "free")
+        return False
+    return True
 
 
 def show_upgrade_prompt():
@@ -182,16 +256,136 @@ def show_upgrade_prompt():
 def require_pro():
     user = require_auth()
     if not is_pro(user):
-        from config.styles import inject_pro_css
-        inject_pro_css()
         show_upgrade_prompt()
         st.stop()
     return user
 
 
 def _show_login_form():
-    from config.styles import inject_pro_css
-    inject_pro_css()
+    st.markdown("""
+    <style>
+        .archon-landing {
+            background: #0E1117;
+            border: 1px solid rgba(0, 212, 170, 0.25);
+            border-radius: 16px;
+            padding: 1.25rem;
+            margin: 0.5rem 0 1rem 0;
+        }
+        .archon-card {
+            background: rgba(0, 212, 170, 0.08);
+            border: 1px solid rgba(0, 212, 170, 0.25);
+            border-radius: 14px;
+            padding: 1rem;
+            height: 100%;
+        }
+        .archon-price-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 14px;
+            padding: 1rem;
+            height: 100%;
+        }
+        .archon-price-card.pro {
+            border: 1px solid rgba(0, 212, 170, 0.5);
+            box-shadow: 0 0 0 1px rgba(0, 212, 170, 0.2) inset;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("# 🏛️ ARCHON")
+    st.markdown("### AI 기반 주식 자동매매 플랫폼")
+
+    st.markdown("""
+    <div class="archon-landing">
+        <h2 style="margin:0 0 0.6rem 0;color:#E2E8F0;">AI가 당신의 투자를 자동화합니다</h2>
+        <p style="margin:0;color:#A0AEC0;">전략 수립부터 자동 실행까지, AI가 쉬지 않고 시장을 모니터링합니다.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    stat1, stat2, stat3 = st.columns(3)
+    with stat1:
+        st.markdown("""
+        <div class="archon-card" style="text-align:center;">
+            <div style="font-size:1.5rem;font-weight:700;color:#00D4AA;">13+</div>
+            <div style="color:#A0AEC0;">기능 제공</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with stat2:
+        st.markdown("""
+        <div class="archon-card" style="text-align:center;">
+            <div style="font-size:1.5rem;font-weight:700;color:#00D4AA;">3개</div>
+            <div style="color:#A0AEC0;">증권사 연동</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with stat3:
+        st.markdown("""
+        <div class="archon-card" style="text-align:center;">
+            <div style="font-size:1.5rem;font-weight:700;color:#00D4AA;">5개</div>
+            <div style="color:#A0AEC0;">동시 오토파일럿</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    feature1, feature2, feature3 = st.columns(3)
+    with feature1:
+        st.markdown("""
+        <div class="archon-card">
+            <h4 style="margin:0 0 0.35rem 0;color:#E2E8F0;">🤖 AI 오토파일럿</h4>
+            <p style="margin:0;color:#A0AEC0;">종목 추천부터 매매까지 완전 자동</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with feature2:
+        st.markdown("""
+        <div class="archon-card">
+            <h4 style="margin:0 0 0.35rem 0;color:#E2E8F0;">📊 고급 분석 도구</h4>
+            <p style="margin:0;color:#A0AEC0;">기술적분석, 백테스팅, 리스크분석</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with feature3:
+        st.markdown("""
+        <div class="archon-card">
+            <h4 style="margin:0 0 0.35rem 0;color:#E2E8F0;">💬 AI 채팅</h4>
+            <p style="margin:0;color:#A0AEC0;">OpenAI, Claude, Gemini 지원</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    price1, price2 = st.columns(2)
+    with price1:
+        st.markdown("""
+        <div class="archon-price-card">
+            <h4 style="margin:0 0 0.5rem 0;color:#E2E8F0;">Free</h4>
+            <div style="color:#A0AEC0;line-height:1.8;">
+                기본 기능 무료<br>
+                일봉 데이터<br>
+                5개 지표<br>
+                포트폴리오 5종목
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    with price2:
+        st.markdown("""
+        <div class="archon-price-card pro">
+            <h4 style="margin:0 0 0.5rem 0;color:#00D4AA;">Pro 월 99,000원</h4>
+            <div style="color:#A0AEC0;line-height:1.8;">
+                모든 기능 무제한<br>
+                오토파일럿<br>
+                AI예측<br>
+                종목추천
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div style="
+        background:linear-gradient(90deg, rgba(0,212,170,0.18), rgba(0,212,170,0.05));
+        border:1px solid rgba(0,212,170,0.35);
+        border-radius:14px;
+        padding:1rem;
+        margin:1rem 0 1.2rem 0;
+        text-align:center;
+    ">
+        <h3 style="margin:0;color:#00D4AA;">⚡ 지금 시작하세요</h3>
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown("""
     <div style="text-align:center;padding:2rem 0 1rem 0">

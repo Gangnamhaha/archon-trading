@@ -5,8 +5,11 @@ SQLite 데이터베이스 모듈
 """
 import sqlite3
 import os
+import random
+import string
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "portfolio.db")
 
@@ -93,6 +96,27 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS referral_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT UNIQUE NOT NULL,
+            owner_username TEXT NOT NULL,
+            used_by TEXT,
+            reward_type TEXT DEFAULT 'pro_7days',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            used_at TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_plan_meta (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER UNIQUE NOT NULL,
+            expires_at TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -111,7 +135,7 @@ def save_user_setting(username: str, key: str, value: str):
     conn.close()
 
 
-def load_user_setting(username: str, key: str, default: str = None):
+def load_user_setting(username: str, key: str, default: Optional[str] = None):
     init_db()
     conn = get_connection()
     cursor = conn.execute(
@@ -123,7 +147,7 @@ def load_user_setting(username: str, key: str, default: str = None):
     return row["setting_value"] if row else default
 
 
-def load_all_user_settings(username: str) -> dict:
+def load_all_user_settings(username: str) -> dict[str, str]:
     init_db()
     conn = get_connection()
     cursor = conn.execute(
@@ -148,7 +172,7 @@ def save_chat_message(username: str, chat_type: str, role: str, content: str):
     conn.close()
 
 
-def load_chat_history(username: str, chat_type: str = "general", limit: int = 100) -> list:
+def load_chat_history(username: str, chat_type: str = "general", limit: int = 100) -> list[dict[str, str]]:
     init_db()
     conn = get_connection()
     cursor = conn.execute(
@@ -174,7 +198,7 @@ def clear_chat_history(username: str, chat_type: str = "general"):
 
 # === 활동 로그 ===
 
-def log_activity(username: str, action: str, detail: str = None):
+def log_activity(username: str, action: str, detail: Optional[str] = None):
     init_db()
     conn = get_connection()
     conn.execute(
@@ -191,10 +215,157 @@ def get_activity_log(username: str, limit: int = 50) -> pd.DataFrame:
     df = pd.read_sql_query(
         "SELECT action, detail, created_at FROM activity_log WHERE username = ? "
         "ORDER BY id DESC LIMIT ?",
-        conn, params=(username, limit)
+        conn, params=[username, limit]
     )
     conn.close()
     return df
+
+
+def get_all_activity_logs(limit: int = 100) -> pd.DataFrame:
+    init_db()
+    conn = get_connection()
+    df = pd.read_sql_query(
+        "SELECT username, action, detail, created_at FROM activity_log ORDER BY id DESC LIMIT ?",
+        conn, params=[limit]
+    )
+    conn.close()
+    return df
+
+
+def _create_referral_code() -> str:
+    chars = string.ascii_uppercase + string.digits
+    return "".join(random.choice(chars) for _ in range(8))
+
+
+def _grant_pro_reward(conn, username: str, days: int):
+    user_row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+    if user_row is None:
+        return False
+
+    user_id = int(user_row["id"])
+    now = datetime.now()
+    expiry_row = conn.execute(
+        "SELECT expires_at FROM user_plan_meta WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+
+    base_time = now
+    if expiry_row and expiry_row["expires_at"]:
+        try:
+            current_expiry = datetime.fromisoformat(expiry_row["expires_at"])
+            if current_expiry > now:
+                base_time = current_expiry
+        except ValueError:
+            base_time = now
+
+    new_expiry = (base_time + timedelta(days=days)).isoformat()
+
+    conn.execute("UPDATE users SET plan='pro' WHERE id = ?", (user_id,))
+    conn.execute(
+        """
+        INSERT INTO user_plan_meta (user_id, expires_at, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            expires_at=excluded.expires_at,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (user_id, new_expiry),
+    )
+    return True
+
+
+def generate_referral_code(username: str) -> str:
+    init_db()
+    conn = get_connection()
+    try:
+        while True:
+            code = _create_referral_code()
+            exists = conn.execute("SELECT id FROM referral_codes WHERE code = ?", (code,)).fetchone()
+            if exists is None:
+                conn.execute(
+                    "INSERT INTO referral_codes (code, owner_username) VALUES (?, ?)",
+                    (code, username),
+                )
+                conn.commit()
+                return code
+    finally:
+        conn.close()
+
+
+def get_referral_code(username: str) -> str:
+    init_db()
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT code FROM referral_codes WHERE owner_username = ? AND used_by IS NULL ORDER BY id DESC LIMIT 1",
+        (username,),
+    ).fetchone()
+    conn.close()
+    if row:
+        return row["code"]
+    return generate_referral_code(username)
+
+
+def use_referral_code(code: str, new_username: str):
+    init_db()
+    normalized_code = (code or "").strip().upper()
+    if not normalized_code:
+        return False, "추천인 코드를 입력하세요."
+
+    conn = get_connection()
+    try:
+        referral = conn.execute(
+            "SELECT id, owner_username FROM referral_codes WHERE code = ? AND used_by IS NULL",
+            (normalized_code,),
+        ).fetchone()
+        if referral is None:
+            return False, "유효하지 않거나 이미 사용된 코드입니다."
+
+        owner_username = referral["owner_username"]
+        if owner_username == new_username:
+            return False, "본인 코드는 사용할 수 없습니다."
+
+        already_used = conn.execute(
+            "SELECT id FROM referral_codes WHERE used_by = ? LIMIT 1",
+            (new_username,),
+        ).fetchone()
+        if already_used:
+            return False, "이미 추천인 코드를 사용했습니다."
+
+        owner_exists = conn.execute("SELECT id FROM users WHERE username = ?", (owner_username,)).fetchone()
+        new_user_exists = conn.execute("SELECT id FROM users WHERE username = ?", (new_username,)).fetchone()
+        if owner_exists is None or new_user_exists is None:
+            return False, "사용자 정보를 찾을 수 없습니다."
+
+        used_at = datetime.now().isoformat()
+        result = conn.execute(
+            "UPDATE referral_codes SET used_by = ?, used_at = ? WHERE id = ? AND used_by IS NULL",
+            (new_username, used_at, referral["id"]),
+        )
+        if result.rowcount == 0:
+            return False, "코드 사용 처리 중 오류가 발생했습니다. 다시 시도해 주세요."
+
+        owner_rewarded = _grant_pro_reward(conn, owner_username, 7)
+        new_rewarded = _grant_pro_reward(conn, new_username, 7)
+        if not owner_rewarded or not new_rewarded:
+            conn.rollback()
+            return False, "리워드 처리 중 오류가 발생했습니다. 다시 시도해 주세요."
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return True, "추천인 리워드가 적용되었습니다! 양쪽 모두 Pro 7일이 지급되었습니다."
+
+
+def get_referral_stats(username: str) -> int:
+    init_db()
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM referral_codes WHERE owner_username = ? AND used_by IS NOT NULL",
+        (username,),
+    ).fetchone()
+    conn.close()
+    return int(row["cnt"] if row else 0)
 
 
 # === 워치리스트 ===
@@ -223,7 +394,7 @@ def get_watchlist(username: str) -> pd.DataFrame:
     init_db()
     conn = get_connection()
     df = pd.read_sql_query(
-        "SELECT * FROM watchlist WHERE username = ? ORDER BY created_at DESC", conn, params=(username,)
+        "SELECT * FROM watchlist WHERE username = ? ORDER BY created_at DESC", conn, params=[username]
     )
     conn.close()
     return df
@@ -231,7 +402,7 @@ def get_watchlist(username: str) -> pd.DataFrame:
 
 # === 포트폴리오 CRUD ===
 
-def add_stock(ticker: str, market: str, name: str, buy_price: float, quantity: int, buy_date: str = None):
+def add_stock(ticker: str, market: str, name: str, buy_price: float, quantity: int, buy_date: Optional[str] = None):
     """포트폴리오에 종목 추가"""
     if buy_date is None:
         buy_date = datetime.now().strftime("%Y-%m-%d")
@@ -261,7 +432,7 @@ def get_portfolio() -> pd.DataFrame:
     return df
 
 
-def update_stock(stock_id: int, buy_price: float = None, quantity: int = None):
+def update_stock(stock_id: int, buy_price: Optional[float] = None, quantity: Optional[int] = None):
     """포트폴리오 종목 수정"""
     conn = get_connection()
     if buy_price is not None:
@@ -274,7 +445,7 @@ def update_stock(stock_id: int, buy_price: float = None, quantity: int = None):
 
 # === 거래 이력 ===
 
-def add_trade(ticker: str, market: str, action: str, price: float, quantity: int, strategy: str = None):
+def add_trade(ticker: str, market: str, action: str, price: float, quantity: int, strategy: Optional[str] = None):
     """거래 이력 추가"""
     init_db()
     conn = get_connection()
@@ -286,19 +457,19 @@ def add_trade(ticker: str, market: str, action: str, price: float, quantity: int
     conn.close()
 
 
-def get_trades(ticker: str = None, limit: int = 100) -> pd.DataFrame:
+def get_trades(ticker: Optional[str] = None, limit: int = 100) -> pd.DataFrame:
     """거래 이력 조회"""
     init_db()
     conn = get_connection()
     if ticker:
         df = pd.read_sql_query(
             "SELECT * FROM trade_history WHERE ticker = ? ORDER BY timestamp DESC LIMIT ?",
-            conn, params=(ticker, limit)
+            conn, params=[ticker, limit]
         )
     else:
         df = pd.read_sql_query(
             "SELECT * FROM trade_history ORDER BY timestamp DESC LIMIT ?",
-            conn, params=(limit,)
+            conn, params=[limit]
         )
     conn.close()
     return df
