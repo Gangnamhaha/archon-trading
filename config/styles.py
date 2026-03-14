@@ -348,6 +348,10 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
                 st.rerun()
 
         st.markdown("---")
+        from config.i18n import show_lang_selector, t as _t
+        with st.expander("🌐 " + _t("language"), expanded=False):
+            show_lang_selector()
+
         with st.expander("🤖 앱 가이드", expanded=False):
             if "guide_messages" not in st.session_state:
                 st.session_state["guide_messages"] = []
