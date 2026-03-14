@@ -1,4 +1,7 @@
 import sys, os
+import io
+import importlib
+from typing import TypedDict, Sequence, Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
@@ -13,22 +16,36 @@ inject_pro_css()
 username = user["username"]
 st.title("💬 AI 채팅")
 
-_PROVIDERS = {
+
+class _ProviderInfo(TypedDict):
+    models: list[str]
+    key_label: str
+    key_name: str
+
+
+_PROVIDERS: dict[str, _ProviderInfo] = {
     "OpenAI": {"models": ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"], "key_label": "OpenAI API Key", "key_name": "openai_api_key"},
     "Claude": {"models": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"], "key_label": "Anthropic API Key", "key_name": "anthropic_api_key"},
     "Gemini": {"models": ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"], "key_label": "Google API Key", "key_name": "gemini_api_key"},
 }
 
 
-def call_ai(provider: str, api_key: str, model: str, messages: list, temperature: float, max_tokens: int = 4096) -> str:
+def call_ai(
+    provider: str,
+    api_key: str,
+    model: str,
+    messages: Sequence[dict[str, Optional[str]]],
+    temperature: float,
+    max_tokens: int = 4096,
+) -> str:
     if provider == "OpenAI":
-        from openai import OpenAI
+        OpenAI = importlib.import_module("openai").OpenAI
         client = OpenAI(api_key=api_key)
         resp = client.chat.completions.create(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens)
         return resp.choices[0].message.content
 
     elif provider == "Claude":
-        import anthropic
+        anthropic = importlib.import_module("anthropic")
         client = anthropic.Anthropic(api_key=api_key)
         system_msg = ""
         chat_msgs = []
@@ -41,7 +58,7 @@ def call_ai(provider: str, api_key: str, model: str, messages: list, temperature
         return resp.content[0].text
 
     elif provider == "Gemini":
-        import google.generativeai as genai
+        genai = importlib.import_module("google.generativeai")
         genai.configure(api_key=api_key)
         gen_model = genai.GenerativeModel(model)
         system_msg = ""
@@ -82,25 +99,27 @@ with st.sidebar:
     _saved_provider = chat_settings.get("provider", "OpenAI")
     _provider_list = list(_PROVIDERS.keys())
     _prov_idx = _provider_list.index(_saved_provider) if _saved_provider in _provider_list else 0
-    provider = st.selectbox("제공사 선택", _provider_list, index=_prov_idx, key="chat_provider")
+    provider = str(st.selectbox("제공사 선택", _provider_list, index=_prov_idx, key="chat_provider") or "OpenAI")
     prov_info = _PROVIDERS[provider]
+    prov_key_name = prov_info["key_name"]
+    prov_key_label = prov_info["key_label"]
 
     st.markdown("---")
     st.subheader("API 설정")
     from data.database import load_user_setting, save_user_setting
-    _saved_key = load_user_setting(username, prov_info["key_name"], "")
+    _saved_key = load_user_setting(username, prov_key_name, "")
     if f"_api_key_{provider}" not in st.session_state:
         st.session_state[f"_api_key_{provider}"] = _saved_key
 
-    api_key = st.text_input(prov_info["key_label"], type="password", value=st.session_state[f"_api_key_{provider}"], key="api_key_input")
+    api_key = st.text_input(prov_key_label, type="password", value=st.session_state[f"_api_key_{provider}"], key="api_key_input")
     if api_key and api_key != st.session_state[f"_api_key_{provider}"]:
         st.session_state[f"_api_key_{provider}"] = api_key
-        save_user_setting(username, prov_info["key_name"], api_key)
+        save_user_setting(username, prov_key_name, api_key)
 
     st.markdown("---")
     _saved_model = chat_settings.get("model", prov_info["models"][0])
     _model_idx = prov_info["models"].index(_saved_model) if _saved_model in prov_info["models"] else 0
-    model = st.selectbox("모델", prov_info["models"], index=_model_idx, key="chat_model")
+    model = str(st.selectbox("모델", prov_info["models"], index=_model_idx, key="chat_model") or prov_info["models"][0])
     temperature = st.slider("Temperature", 0.0, 2.0, float(chat_settings.get("temperature", 0.7)), 0.1, key="chat_temp")
     system_prompt = st.text_area(
         "시스템 프롬프트",
@@ -125,7 +144,7 @@ save_user_preferences(username, "ai_chat", {
 })
 
 if not api_key:
-    st.info(f"좌측 사이드바에서 **{prov_info['key_label']}**를 입력하세요.")
+    st.info(f"좌측 사이드바에서 **{prov_key_label}**를 입력하세요.")
     st.markdown(f"""
     ### API Key 발급 방법
 
@@ -146,14 +165,48 @@ for idx, msg in enumerate(st.session_state["chat_messages"]):
 
 stt_col1, stt_col2 = st.columns([1, 8])
 with stt_col1:
+    stt_ok = False
     try:
-        from streamlit_mic_recorder import speech_to_text
+        speech_to_text = importlib.import_module("streamlit_mic_recorder").speech_to_text
         stt_result = speech_to_text(language="ko", start_prompt="🎤", stop_prompt="⏹️", just_once=True, use_container_width=True, key="stt_main")
         if stt_result:
             st.session_state["stt_text"] = stt_result
-    except ImportError:
+            stt_ok = True
+    except Exception:
         if st.button("🎤", key="stt_fallback"):
             st.toast("streamlit-mic-recorder 패키지 필요")
+
+    if not stt_ok:
+        try:
+            audio_input_fn = getattr(st, "audio_input", None)
+            audio_file = audio_input_fn("", key="stt_audio_input") if callable(audio_input_fn) else None
+            if audio_file is not None:
+                openai_key = load_user_setting(username, "openai_api_key", "")
+                if not openai_key:
+                    st.toast("음성 전사를 위해 OpenAI API Key를 설정하세요.")
+                else:
+                    try:
+                        OpenAI = __import__("openai").OpenAI
+                        client = OpenAI(api_key=openai_key)
+                        get_value = getattr(audio_file, "getvalue", None)
+                        if not callable(get_value):
+                            st.toast("녹음 데이터를 읽을 수 없습니다.")
+                            raise RuntimeError("audio_input object has no getvalue")
+                        raw_audio = get_value()
+                        if not isinstance(raw_audio, (bytes, bytearray)):
+                            st.toast("녹음 데이터 형식이 올바르지 않습니다.")
+                            raise RuntimeError("audio_input bytes invalid")
+                        audio_bytes = io.BytesIO(bytes(raw_audio))
+                        audio_bytes.name = "speech.wav"
+                        transcript = client.audio.transcriptions.create(model="whisper-1", file=audio_bytes)
+                        text = getattr(transcript, "text", "")
+                        if text:
+                            st.session_state["stt_text"] = text
+                            st.toast("음성 인식 완료")
+                    except Exception as e:
+                        st.toast(f"음성 인식 실패: {e}")
+        except AttributeError:
+            pass
 with stt_col2:
     if st.session_state["stt_text"]:
         st.info(f"🎤 인식: **{st.session_state['stt_text']}**")

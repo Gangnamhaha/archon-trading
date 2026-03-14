@@ -6,7 +6,13 @@ import pandas as pd
 import plotly.express as px
 from config.styles import inject_pro_css
 from config.auth import require_auth, is_admin, create_user, delete_user, change_password, get_all_users, logout, update_user_plan
-from data.database import get_trades, get_portfolio, get_all_activity_logs
+from data.database import (
+    get_trades,
+    get_portfolio,
+    get_all_activity_logs,
+    get_customer_inquiries,
+    update_customer_inquiry,
+)
 
 st.set_page_config(page_title="Admin", page_icon="", layout="wide")
 user = require_auth()
@@ -18,7 +24,7 @@ if not is_admin():
 
 st.title("Admin Panel")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Users", "Trade Log", "System", "My Account", "Analytics"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Users", "Trade Log", "System", "My Account", "Analytics", "Inquiries"])
 
 users_df = get_all_users()
 
@@ -256,3 +262,34 @@ with tab5:
         )
         fig_plan.update_layout(plot_bgcolor="#0E1117", paper_bgcolor="#0E1117", font_color="#E2E8F0")
         st.plotly_chart(fig_plan, use_container_width=True)
+
+with tab6:
+    st.subheader("고객 문의 관리")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        inq_status = str(st.selectbox("상태 필터", ["전체", "접수", "처리중", "완료"], key="inq_status") or "전체")
+    with c2:
+        inq_limit = st.slider("조회 개수", 20, 500, 200, key="inq_limit")
+
+    inquiries_df = get_customer_inquiries(status=inq_status, limit=inq_limit)
+    if inquiries_df.empty:
+        st.info("문의 내역이 없습니다.")
+    else:
+        st.dataframe(inquiries_df, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.markdown("**문의 상태 업데이트**")
+        options = {
+            f"#{int(r['id'])} | {r['username']} | {r['title']} | {r['status']}": int(r["id"])
+            for _, r in inquiries_df.iterrows()
+        }
+        selected = str(st.selectbox("문의 선택", list(options.keys()), key="inq_select") or "")
+        new_status = str(st.selectbox("변경 상태", ["접수", "처리중", "완료"], key="inq_new_status") or "접수")
+        admin_note = st.text_area("관리자 메모", key="inq_admin_note", height=100)
+        if st.button("문의 업데이트", type="primary", use_container_width=True, key="inq_update_btn"):
+            if not selected or selected not in options:
+                st.error("업데이트할 문의를 선택하세요.")
+            else:
+                update_customer_inquiry(int(options[selected]), new_status, admin_note.strip())
+                st.success("문의 상태가 업데이트되었습니다.")
+                st.rerun()

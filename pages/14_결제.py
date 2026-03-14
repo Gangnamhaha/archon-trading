@@ -9,7 +9,12 @@ import streamlit as st
 
 from config.auth import require_auth, is_pro, update_user_plan, get_plan_expiry
 from config.styles import inject_pro_css
-from data.database import get_referral_code, use_referral_code, get_referral_stats
+from data.database import (
+    get_referral_code,
+    use_referral_code,
+    get_referral_stats,
+    apply_verified_payment,
+)
 
 try:
     stripe = importlib.import_module("stripe")
@@ -25,12 +30,94 @@ if stripe is not None:
     setattr(stripe, "api_key", stripe_api_key)
 
 
+ALLOW_DEMO_PAYMENTS = str(st.secrets.get("ALLOW_DEMO_PAYMENTS", "false")).lower() in {"1", "true", "yes", "on"}
+PLAN_CONFIG = {
+    "monthly": {"amount": 99000, "currency": "krw"},
+    "annual": {"amount": 990000, "currency": "krw"},
+}
+
+
+def _verify_stripe_checkout_for_user(session_id: str):
+    if stripe is None or not stripe_api_key:
+        return False, "Stripe 검증에 필요한 설정이 없습니다.", None
+
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+    except Exception as e:
+        return False, f"Stripe 세션 조회 실패: {e}", None
+
+    if getattr(session, "payment_status", "") != "paid":
+        return False, "결제가 완료되지 않았습니다.", None
+    if getattr(session, "status", "") != "complete":
+        return False, "체크아웃 완료 상태가 아닙니다.", None
+
+    metadata = getattr(session, "metadata", {}) or {}
+    metadata_user_id = str(metadata.get("user_id", ""))
+    if metadata_user_id != str(user.get("id")):
+        return False, "현재 사용자와 결제 메타데이터가 일치하지 않습니다.", None
+
+    plan_type = metadata.get("plan_type", "monthly")
+    expected = PLAN_CONFIG.get(plan_type)
+    if expected is None:
+        return False, "알 수 없는 플랜 결제입니다.", None
+
+    if int(getattr(session, "amount_total", 0) or 0) != int(expected["amount"]):
+        return False, "결제 금액 검증에 실패했습니다.", None
+
+    if str(getattr(session, "currency", "")).lower() != expected["currency"]:
+        return False, "결제 통화 검증에 실패했습니다.", None
+
+    return True, plan_type, session
+
+
 def _sync_payment_success():
     payment_status = st.query_params.get("payment", "")
-    if payment_status == "success" and not is_pro(user):
-        update_user_plan(user["id"], "pro")
-        st.success("결제가 완료되어 Pro 플랜으로 업그레이드되었습니다.")
-        st.query_params.clear()
+    provider = st.query_params.get("provider", "")
+
+    if payment_status != "success" or is_pro(user):
+        return
+
+    if provider == "stripe":
+        session_id = st.query_params.get("session_id", "")
+        if not session_id:
+            st.error("Stripe 결제 검증 정보가 누락되었습니다.")
+            return
+
+        verified, result, checkout_session = _verify_stripe_checkout_for_user(session_id)
+        if verified:
+            metadata = getattr(checkout_session, "metadata", {}) or {}
+            plan_type = metadata.get("plan_type", "monthly")
+            amount_total = int(getattr(checkout_session, "amount_total", 0) or 0)
+            currency = str(getattr(checkout_session, "currency", "")).lower()
+            payment_apply_status = apply_verified_payment(
+                provider="stripe",
+                payment_id=session_id,
+                username=user["username"],
+                plan_type=plan_type,
+                amount=amount_total,
+                currency=currency,
+            )
+            if payment_apply_status == "duplicate":
+                st.warning("이미 처리된 결제입니다. 중복 반영하지 않습니다.")
+                st.query_params.clear()
+                return
+            if payment_apply_status == "applied":
+                st.success("Stripe 결제가 검증되어 Pro 플랜으로 업그레이드되었습니다.")
+                st.query_params.clear()
+                return
+            if payment_apply_status == "user_not_found":
+                st.error("결제 사용자 정보를 찾을 수 없습니다. 관리자에게 문의하세요.")
+                st.query_params.clear()
+                return
+            st.error("결제 반영 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
+            st.query_params.clear()
+        else:
+            st.error(f"결제 검증 실패: {result}")
+            st.query_params.clear()
+        return
+
+    st.warning("자동 결제 확인이 지원되지 않는 결제수단입니다. 관리자 검증 후 플랜이 반영됩니다.")
+    st.query_params.clear()
 
 
 def _create_checkout_session(plan_type: str):
@@ -64,7 +151,7 @@ def _create_checkout_session(plan_type: str):
                 "quantity": 1,
             }
         ],
-        success_url=f"{base_url}?payment=success",
+        success_url=f"{base_url}?payment=success&provider=stripe&session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{base_url}?payment=cancel",
         metadata={
             "user_id": str(user["id"]),
@@ -166,10 +253,13 @@ if pay_method == "토스페이먼츠 (카드/계좌이체/카카오페이)":
         components.html(_toss_html, height=70)
     else:
         st.warning("토스페이먼츠 키 미설정. `.streamlit/secrets.toml`에 `TOSS_CLIENT_KEY`를 추가하세요.")
-        if st.button("데모 결제 (토스)", type="primary", use_container_width=True, key="toss_demo"):
-            update_user_plan(user["id"], "pro")
-            st.success("데모 결제 완료! Pro 업그레이드됨.")
-            st.rerun()
+        if ALLOW_DEMO_PAYMENTS:
+            if st.button("데모 결제 (토스)", type="primary", use_container_width=True, key="toss_demo"):
+                update_user_plan(user["id"], "pro")
+                st.success("데모 결제 완료! Pro 업그레이드됨.")
+                st.rerun()
+        else:
+            st.info("데모 결제는 비활성화되어 있습니다. 운영 환경에서는 실제 결제 키를 사용하세요.")
 
 elif pay_method == "아임포트 Portone (통합 PG)":
     st.subheader("요금제")
@@ -204,10 +294,13 @@ elif pay_method == "아임포트 Portone (통합 PG)":
         components.html(_portone_html, height=70)
     else:
         st.warning("아임포트 코드 미설정. `.streamlit/secrets.toml`에 `PORTONE_IMP_CODE`를 추가하세요.")
-        if st.button("데모 결제 (아임포트)", type="primary", use_container_width=True, key="portone_demo"):
-            update_user_plan(user["id"], "pro")
-            st.success("데모 결제 완료! Pro 업그레이드됨.")
-            st.rerun()
+        if ALLOW_DEMO_PAYMENTS:
+            if st.button("데모 결제 (아임포트)", type="primary", use_container_width=True, key="portone_demo"):
+                update_user_plan(user["id"], "pro")
+                st.success("데모 결제 완료! Pro 업그레이드됨.")
+                st.rerun()
+        else:
+            st.info("데모 결제는 비활성화되어 있습니다. 운영 환경에서는 실제 결제 키를 사용하세요.")
 
 elif pay_method == "카카오페이 (간편결제)":
     st.subheader("요금제")
@@ -230,7 +323,13 @@ elif pay_method == "카카오페이 (간편결제)":
                     "cancel_url": st.secrets.get("APP_BASE_URL", "http://localhost:8501") + "?payment=cancel",
                     "fail_url": st.secrets.get("APP_BASE_URL", "http://localhost:8501") + "?payment=fail",
                 }
-                _resp = _req.post("https://kapi.kakao.com/v1/payment/ready", headers=_headers, data=_data)
+                _resp = _req.post(
+                    "https://kapi.kakao.com/v1/payment/ready",
+                    headers=_headers,
+                    data=_data,
+                    timeout=10,
+                )
+                _resp.raise_for_status()
                 _result = _resp.json()
                 if "next_redirect_pc_url" in _result:
                     st.link_button("카카오페이 결제 페이지로 이동", _result["next_redirect_pc_url"], use_container_width=True)
@@ -240,10 +339,13 @@ elif pay_method == "카카오페이 (간편결제)":
                 st.error(f"카카오페이 연동 실패: {e}")
     else:
         st.warning("카카오페이 키 미설정. `.streamlit/secrets.toml`에 `KAKAO_ADMIN_KEY`를 추가하세요.")
-        if st.button("데모 결제 (카카오페이)", type="primary", use_container_width=True, key="kakao_demo"):
-            update_user_plan(user["id"], "pro")
-            st.success("데모 결제 완료! Pro 업그레이드됨.")
-            st.rerun()
+        if ALLOW_DEMO_PAYMENTS:
+            if st.button("데모 결제 (카카오페이)", type="primary", use_container_width=True, key="kakao_demo"):
+                update_user_plan(user["id"], "pro")
+                st.success("데모 결제 완료! Pro 업그레이드됨.")
+                st.rerun()
+        else:
+            st.info("데모 결제는 비활성화되어 있습니다. 운영 환경에서는 실제 결제 키를 사용하세요.")
 
 else:
     st.subheader("요금제")
@@ -281,10 +383,13 @@ else:
 
     if not stripe_api_key or stripe is None:
         st.warning("Stripe 키가 설정되지 않아 데모 결제 모드로 동작합니다.")
-        if st.button("데모 결제하기 (테스트 업그레이드)", type="primary", use_container_width=True):
-            update_user_plan(user["id"], "pro")
-            st.success("데모 결제가 완료되어 Pro 플랜으로 변경되었습니다.")
-            st.rerun()
+        if ALLOW_DEMO_PAYMENTS:
+            if st.button("데모 결제하기 (테스트 업그레이드)", type="primary", use_container_width=True):
+                update_user_plan(user["id"], "pro")
+                st.success("데모 결제가 완료되어 Pro 플랜으로 변경되었습니다.")
+                st.rerun()
+        else:
+            st.info("데모 결제는 비활성화되어 있습니다. 운영 환경에서는 실제 결제 키를 사용하세요.")
 
 st.markdown("---")
 st.subheader("추천인 리워드")

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 import time as _time
 
-_rate_limits: dict = {}
+_rate_limits: dict[str, list[float]] = {}
 
 def _check_rate_limit(key: str, max_calls: int = 10, window: int = 60) -> bool:
     now = _time.time()
@@ -172,6 +172,83 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS customer_inquiries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            category TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT '접수',
+            admin_note TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS marketing_automation_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            run_type TEXT NOT NULL DEFAULT 'SNS 포스트',
+            market TEXT NOT NULL DEFAULT 'KOSPI',
+            platform TEXT NOT NULL DEFAULT '트위터 (280자)',
+            publish_channel TEXT NOT NULL DEFAULT '일반 웹훅',
+            interval_minutes INTEGER NOT NULL DEFAULT 120,
+            webhook_url TEXT,
+            publish_notice INTEGER NOT NULL DEFAULT 0,
+            notify_on_failure INTEGER NOT NULL DEFAULT 1,
+            alert_email TEXT,
+            is_active INTEGER NOT NULL DEFAULT 0,
+            last_run_at TEXT,
+            next_run_at TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    try:
+        cursor.execute("ALTER TABLE marketing_automation_jobs ADD COLUMN run_type TEXT NOT NULL DEFAULT 'SNS 포스트'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE marketing_automation_jobs ADD COLUMN publish_channel TEXT NOT NULL DEFAULT '일반 웹훅'")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE marketing_automation_jobs ADD COLUMN notify_on_failure INTEGER NOT NULL DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE marketing_automation_jobs ADD COLUMN alert_email TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS marketing_automation_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            run_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            message TEXT,
+            content_preview TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payment_receipts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            payment_id TEXT NOT NULL,
+            username TEXT NOT NULL,
+            plan_type TEXT,
+            amount INTEGER,
+            currency TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(provider, payment_id)
+        )
+    """)
+
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_settings_user ON user_settings(username)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history(username, chat_type)")
@@ -183,6 +260,10 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_referral_owner ON referral_codes(owner_username)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notices_created ON notices(created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_newsletter_email ON newsletter_subscribers(email)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_payment_receipts_user ON payment_receipts(username)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_mkt_logs_user ON marketing_automation_logs(username, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_inquiries_status ON customer_inquiries(status, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_inquiries_user ON customer_inquiries(username, created_at)")
 
     conn.commit()
     conn.close()
@@ -580,12 +661,305 @@ def add_notice(title: str, content: str, author: str):
     conn.close()
 
 
+def upsert_marketing_automation_job(
+    username: str,
+    run_type: str,
+    market: str,
+    platform: str,
+    publish_channel: str,
+    interval_minutes: int,
+    webhook_url: Optional[str],
+    publish_notice: bool,
+    notify_on_failure: bool,
+    alert_email: Optional[str],
+    is_active: bool,
+):
+    init_db()
+    now = datetime.now()
+    next_run = now + timedelta(minutes=max(1, int(interval_minutes)))
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO marketing_automation_jobs
+        (username, run_type, market, platform, publish_channel, interval_minutes, webhook_url, publish_notice,
+         notify_on_failure, alert_email, is_active, next_run_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(username) DO UPDATE SET
+            run_type=excluded.run_type,
+            market=excluded.market,
+            platform=excluded.platform,
+            publish_channel=excluded.publish_channel,
+            interval_minutes=excluded.interval_minutes,
+            webhook_url=excluded.webhook_url,
+            publish_notice=excluded.publish_notice,
+            notify_on_failure=excluded.notify_on_failure,
+            alert_email=excluded.alert_email,
+            is_active=excluded.is_active,
+            next_run_at=CASE WHEN excluded.is_active=1 THEN excluded.next_run_at ELSE NULL END,
+            updated_at=excluded.updated_at
+        """,
+        (
+            username,
+            run_type,
+            market,
+            platform,
+            publish_channel,
+            int(interval_minutes),
+            webhook_url or None,
+            1 if publish_notice else 0,
+            1 if notify_on_failure else 0,
+            alert_email or None,
+            1 if is_active else 0,
+            next_run.isoformat(),
+            now.isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_marketing_automation_job(username: str) -> Optional[dict[str, object]]:
+    init_db()
+    conn = get_connection()
+    row = conn.execute(
+        """
+        SELECT username, run_type, market, platform, publish_channel, interval_minutes, webhook_url,
+               publish_notice, notify_on_failure, alert_email,
+               is_active, last_run_at, next_run_at, updated_at
+        FROM marketing_automation_jobs
+        WHERE username=?
+        """,
+        (username,),
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return {
+        "username": row["username"],
+        "run_type": row["run_type"],
+        "market": row["market"],
+        "platform": row["platform"],
+        "publish_channel": row["publish_channel"],
+        "interval_minutes": int(row["interval_minutes"]),
+        "webhook_url": row["webhook_url"] or "",
+        "publish_notice": bool(row["publish_notice"]),
+        "notify_on_failure": bool(row["notify_on_failure"]),
+        "alert_email": row["alert_email"] or "",
+        "is_active": bool(row["is_active"]),
+        "last_run_at": row["last_run_at"],
+        "next_run_at": row["next_run_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def mark_marketing_automation_run(username: str):
+    init_db()
+    now = datetime.now()
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT interval_minutes, is_active FROM marketing_automation_jobs WHERE username=?",
+        (username,),
+    ).fetchone()
+    if row is None:
+        conn.close()
+        return
+    next_run = None
+    if int(row["is_active"]) == 1:
+        next_run = (now + timedelta(minutes=max(1, int(row["interval_minutes"]))))
+    conn.execute(
+        """
+        UPDATE marketing_automation_jobs
+        SET last_run_at=?, next_run_at=?, updated_at=?
+        WHERE username=?
+        """,
+        (now.isoformat(), next_run.isoformat() if next_run else None, now.isoformat(), username),
+    )
+    conn.commit()
+    conn.close()
+
+
+def is_marketing_automation_due(username: str) -> bool:
+    init_db()
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT is_active, next_run_at FROM marketing_automation_jobs WHERE username=?",
+        (username,),
+    ).fetchone()
+    conn.close()
+    if row is None or int(row["is_active"]) != 1:
+        return False
+    next_run_at = row["next_run_at"]
+    if not next_run_at:
+        return True
+    try:
+        return datetime.now() >= datetime.fromisoformat(next_run_at)
+    except ValueError:
+        return True
+
+
+def add_marketing_automation_log(
+    username: str,
+    run_type: str,
+    status: str,
+    message: str,
+    content_preview: Optional[str] = None,
+):
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO marketing_automation_logs (username, run_type, status, message, content_preview)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (username, run_type, status, message, content_preview),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_marketing_automation_logs(username: str, limit: int = 20) -> pd.DataFrame:
+    init_db()
+    conn = get_connection()
+    df = pd.read_sql_query(
+        """
+        SELECT run_type, status, message, content_preview, created_at
+        FROM marketing_automation_logs
+        WHERE username=?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        conn,
+        params=[username, limit],
+    )
+    conn.close()
+    return df
+
+
 def get_notices(limit: int = 20) -> pd.DataFrame:
     init_db()
     conn = get_connection()
     df = pd.read_sql_query("SELECT * FROM notices ORDER BY id DESC LIMIT ?", conn, params=[limit])
     conn.close()
     return df
+
+
+def add_customer_inquiry(username: str, category: str, title: str, content: str):
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO customer_inquiries (username, category, title, content, status, updated_at)
+        VALUES (?, ?, ?, ?, '접수', ?)
+        """,
+        (username, category, title, content, datetime.now().isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_customer_inquiries(status: Optional[str] = None, limit: int = 200) -> pd.DataFrame:
+    init_db()
+    conn = get_connection()
+    if status and status != "전체":
+        df = pd.read_sql_query(
+            """
+            SELECT id, username, category, title, content, status, admin_note, created_at, updated_at
+            FROM customer_inquiries
+            WHERE status = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            conn,
+            params=[status, limit],
+        )
+    else:
+        df = pd.read_sql_query(
+            """
+            SELECT id, username, category, title, content, status, admin_note, created_at, updated_at
+            FROM customer_inquiries
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            conn,
+            params=[limit],
+        )
+    conn.close()
+    return df
+
+
+def update_customer_inquiry(inquiry_id: int, status: str, admin_note: str = ""):
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        """
+        UPDATE customer_inquiries
+        SET status = ?, admin_note = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (status, admin_note, datetime.now().isoformat(), inquiry_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def record_payment_receipt(
+    provider: str,
+    payment_id: str,
+    username: str,
+    plan_type: Optional[str] = None,
+    amount: Optional[int] = None,
+    currency: Optional[str] = None,
+) -> bool:
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO payment_receipts (provider, payment_id, username, plan_type, amount, currency)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (provider, payment_id, username, plan_type, amount, currency),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def apply_verified_payment(
+    provider: str,
+    payment_id: str,
+    username: str,
+    plan_type: Optional[str] = None,
+    amount: Optional[int] = None,
+    currency: Optional[str] = None,
+) -> str:
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO payment_receipts (provider, payment_id, username, plan_type, amount, currency)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (provider, payment_id, username, plan_type, amount, currency),
+        )
+        updated = conn.execute("UPDATE users SET plan='pro' WHERE username=?", (username,)).rowcount
+        if updated == 0:
+            conn.rollback()
+            return "user_not_found"
+        conn.commit()
+        return "applied"
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return "duplicate"
+    except Exception:
+        conn.rollback()
+        return "error"
+    finally:
+        conn.close()
 
 
 # 모듈 임포트 시 DB 초기화

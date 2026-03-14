@@ -496,7 +496,7 @@ def _fetch_news_headlines():
     try:
         from data.news import fetch_and_analyze, NEWS_SOURCES
         sources = list(NEWS_SOURCES.keys())[:3]
-        df = fetch_and_analyze(sources, None)
+        df = fetch_and_analyze(sources, "")
         if df is not None and not df.empty:
             return df.head(5).to_dict("records")
     except Exception:
@@ -651,28 +651,33 @@ st.markdown(f"""
 <div class="ps-grid">{_ps_cards}</div>
 """, unsafe_allow_html=True)
 
+st.markdown('<div class="section-hdr">오늘 시작 가이드</div>', unsafe_allow_html=True)
+step_cols = st.columns(3)
+step_cols[0].page_link("pages/1_데이터분석.py", label="1) 데이터 확인", icon="📊", use_container_width=True)
+step_cols[1].page_link("pages/5_종목추천.py", label="2) 종목 추천 받기", icon="🏆", use_container_width=True)
+step_cols[2].page_link("pages/10_자동매매.py", label="3) 자동매매 실행", icon="⚡", use_container_width=True)
+
 # ---------------------------------------------------------------------------
 # 3. Market Summary — Glassmorphism Cards
 # ---------------------------------------------------------------------------
-st.markdown('<div class="section-hdr">Market Overview</div>', unsafe_allow_html=True)
-
-if market_data:
-    cols = st.columns(len(market_data))
-    for col, (name, data) in zip(cols, market_data.items()):
-        pct = data["pct"]
-        cls = "up" if pct > 0 else ("down" if pct < 0 else "flat")
-        sign = "+" if pct > 0 else ""
-        arrow = "▲" if pct > 0 else ("▼" if pct < 0 else "—")
-        fmt_val = f"{data['val']:,.2f}" if data["val"] < 10000 else f"{data['val']:,.0f}"
-        col.markdown(f"""
-        <div class="glass-card">
-            <p class="idx-name">{name}</p>
-            <p class="idx-val">{fmt_val}</p>
-            <p class="idx-chg {cls}">{arrow} {sign}{data['chg']:,.2f} ({sign}{pct:.2f}%)</p>
-        </div>
-        """, unsafe_allow_html=True)
-else:
-    st.caption("시장 데이터 로딩 중...")
+with st.expander("📈 Market Overview", expanded=True):
+    if market_data:
+        cols = st.columns(len(market_data))
+        for col, (name, data) in zip(cols, market_data.items()):
+            pct = data["pct"]
+            cls = "up" if pct > 0 else ("down" if pct < 0 else "flat")
+            sign = "+" if pct > 0 else ""
+            arrow = "▲" if pct > 0 else ("▼" if pct < 0 else "—")
+            fmt_val = f"{data['val']:,.2f}" if data["val"] < 10000 else f"{data['val']:,.0f}"
+            col.markdown(f"""
+            <div class="glass-card">
+                <p class="idx-name">{name}</p>
+                <p class="idx-val">{fmt_val}</p>
+                <p class="idx-chg {cls}">{arrow} {sign}{data['chg']:,.2f} ({sign}{pct:.2f}%)</p>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.caption("시장 데이터 로딩 중...")
 
 # ---------------------------------------------------------------------------
 # 3.5  Fear & Greed Gauge (VIX-based)
@@ -695,37 +700,47 @@ if vix_val is not None:
     _fg_cx = 10 + 160 * (fg_angle / 180)
     _fg_cy = 90 - 80 * _math.sin(_fg_rad)
     _fg_offset = 251 - (fg_angle / 180) * 251
-    fg_col1, fg_col2, fg_col3 = st.columns([1, 2, 1])
-    with fg_col2:
-        st.markdown(f"""
-        <div class="fg-wrap">
-            <p class="fg-label">Fear & Greed Index (VIX 기반)</p>
-            <svg width="180" height="100" viewBox="0 0 180 100" style="margin:0.3rem auto;display:block">
-                <path d="M 10 90 A 80 80 0 0 1 170 90" fill="none" stroke="#2D3748" stroke-width="12" stroke-linecap="round"/>
-                <path d="M 10 90 A 80 80 0 0 1 170 90" fill="none"
-                      stroke="url(#fgGrad)" stroke-width="12" stroke-linecap="round"
-                      stroke-dasharray="251" stroke-dashoffset="{_fg_offset:.1f}"/>
-                <defs><linearGradient id="fgGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stop-color="#00D4AA"/><stop offset="50%" stop-color="#FFC107"/><stop offset="100%" stop-color="#FF4444"/>
-                </linearGradient></defs>
-                <circle cx="{_fg_cx:.1f}" cy="{_fg_cy:.1f}" r="5" fill="{fg_color}"/>
-            </svg>
-            <p class="fg-value" style="color:{fg_color}">{vix_val:.1f}</p>
-            <p class="fg-desc" style="color:{fg_color}">{fg_label}</p>
-        </div>
-        """, unsafe_allow_html=True)
+    with st.expander("😶‍🌫️ Fear & Greed", expanded=False):
+        fg_col1, fg_col2, fg_col3 = st.columns([1, 2, 1])
+        with fg_col2:
+            st.markdown(f"""
+            <div class="fg-wrap">
+                <p class="fg-label">Fear & Greed Index (VIX 기반)</p>
+                <svg width="180" height="100" viewBox="0 0 180 100" style="margin:0.3rem auto;display:block">
+                    <path d="M 10 90 A 80 80 0 0 1 170 90" fill="none" stroke="#2D3748" stroke-width="12" stroke-linecap="round"/>
+                    <path d="M 10 90 A 80 80 0 0 1 170 90" fill="none"
+                          stroke="url(#fgGrad)" stroke-width="12" stroke-linecap="round"
+                          stroke-dasharray="251" stroke-dashoffset="{_fg_offset:.1f}"/>
+                    <defs><linearGradient id="fgGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stop-color="#00D4AA"/><stop offset="50%" stop-color="#FFC107"/><stop offset="100%" stop-color="#FF4444"/>
+                    </linearGradient></defs>
+                    <circle cx="{_fg_cx:.1f}" cy="{_fg_cy:.1f}" r="5" fill="{fg_color}"/>
+                </svg>
+                <p class="fg-value" style="color:{fg_color}">{vix_val:.1f}</p>
+                <p class="fg-desc" style="color:{fg_color}">{fg_label}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # 4. Quick Actions
 # ---------------------------------------------------------------------------
 st.markdown('<div class="section-hdr">Quick Access</div>', unsafe_allow_html=True)
+st.caption("자주 쓰는 기능을 바로 실행하세요.")
 qa_cols = st.columns(4)
-qa_items = [
-    ("pages/1_데이터분석.py", "📊", "데이터분석", False),
-    ("pages/6_AI예측.py", "🤖", "AI예측", True),
-    ("pages/10_종목추천.py", "🏆", "종목추천", True),
-    ("pages/5_자동매매.py", "⚡", "자동매매", True),
-]
+if _user_is_pro:
+    qa_items = [
+        ("pages/10_자동매매.py", "⚡", "자동매매", False),
+        ("pages/5_종목추천.py", "🏆", "종목추천", False),
+        ("pages/6_AI예측.py", "🤖", "AI예측", False),
+        ("pages/9_포트폴리오.py", "📁", "포트폴리오", False),
+    ]
+else:
+    qa_items = [
+        ("pages/1_데이터분석.py", "📊", "데이터분석", False),
+        ("pages/18_자주하는질문.py", "❓", "자주하는질문", False),
+        ("pages/17_고객문의.py", "📩", "고객문의", False),
+        ("pages/14_결제.py", "💳", "Pro 업그레이드", False),
+    ]
 for col, (page, icon, label, pro_only) in zip(qa_cols, qa_items):
     lock_cls = ' qa-lock' if pro_only and not _user_is_pro else ''
     col.markdown(f"""
@@ -790,8 +805,8 @@ if news_headlines:
 # ---------------------------------------------------------------------------
 # 5. Feature Grid — Glassmorphism
 # ---------------------------------------------------------------------------
-st.markdown('<div class="section-hdr">Features</div>', unsafe_allow_html=True)
-st.markdown("""
+with st.expander("🧩 기능 전체 보기", expanded=False):
+    st.markdown("""
 <div class="feature-grid">
     <div class="feature-item">
         <h4>📈 Data Analysis</h4>
@@ -905,7 +920,7 @@ if not _user_is_pro:
 with st.sidebar.expander("종목 추가", expanded=False):
     wl_ticker = st.text_input("종목코드", key="wl_add_ticker", placeholder="005930")
     wl_name = st.text_input("종목명", key="wl_add_name", placeholder="삼성전자")
-    wl_market = st.selectbox("시장", ["KR", "US"], key="wl_add_market")
+    wl_market = str(st.selectbox("시장", ["KR", "US"], key="wl_add_market") or "KR")
     if st.button("추가", key="wl_add_btn", use_container_width=True):
         if not _wl_can_add:
             st.error(f"Free 플랜 한도({_MAX_FREE_WATCHLIST}종목)에 도달했습니다.")
@@ -934,7 +949,7 @@ if not wl.empty:
         if spark_svg:
             c2.markdown(spark_svg, unsafe_allow_html=True)
         if c3.button("✕", key=f"wl_rm_{row['ticker']}"):
-            remove_watchlist(row["ticker"], user["username"])
+            remove_watchlist(str(row["ticker"]), user["username"])
             st.rerun()
 else:
     st.sidebar.caption("워치리스트가 비어있습니다.")

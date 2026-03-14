@@ -1,5 +1,6 @@
 import sys
 import os
+import importlib
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
@@ -9,7 +10,7 @@ from trading.kis_api import KISApi
 from trading.kiwoom_api import KiwoomApi
 from trading.nh_api import NHApi
 from trading.strategy import AVAILABLE_STRATEGIES
-from data.fetcher import fetch_kr_stock
+from data.fetcher import fetch_kr_stock, fetch_us_stock, get_us_popular_stocks
 from data.database import add_trade, get_trades
 from config.styles import inject_pro_css, load_user_preferences, save_user_preferences, show_legal_disclaimer
 from config.auth import require_pro
@@ -52,6 +53,72 @@ for key, default in autopilot_defaults.items():
     if key not in st.session_state:
         st.session_state[key] = autopilot_saved.get(key, default)
 
+
+def _recommend_us_stocks(top_n: int = 40, result_count: int = 5, aggressive: bool = False) -> pd.DataFrame:
+    us_df = get_us_popular_stocks().head(top_n)
+    results = []
+    for _, row in us_df.iterrows():
+        ticker = str(row["ticker"])
+        name = str(row["name"])
+        df = fetch_us_stock(ticker, period="6mo")
+        if df.empty or len(df) < 30:
+            continue
+
+        close = pd.Series(df["Close"])
+        ret_1d = round((close.iloc[-1] / close.iloc[-2] - 1) * 100, 2) if len(close) >= 2 else 0.0
+        ret_5d = round((close.iloc[-1] / close.iloc[-6] - 1) * 100, 2) if len(close) >= 6 else 0.0
+        ret_20d = round((close.iloc[-1] / close.iloc[-21] - 1) * 100, 2) if len(close) >= 21 else 0.0
+
+        volume = pd.Series(df["Volume"]) if "Volume" in df.columns else pd.Series(dtype=float)
+        vol_ratio = 1.0
+        if not volume.empty and len(volume) >= 20:
+            rolling_mean = pd.Series(volume.rolling(20).mean()).dropna()
+            avg_vol = float(rolling_mean.tail(1).values[0]) if not rolling_mean.empty else 0.0
+            if avg_vol > 0 and len(volume) > 0:
+                vol_ratio = float(volume.tail(1).values[0] / avg_vol)
+
+        returns = close.pct_change().dropna()
+        annual_vol = float(returns.tail(20).std() * (252 ** 0.5) * 100) if len(returns) >= 20 else 0.0
+
+        if aggressive:
+            score = ret_20d * 1.8 + ret_5d * 0.8 + max(0.0, (vol_ratio - 1.0) * 10.0) + annual_vol * 0.2
+            score = max(-50.0, min(100.0, score))
+            results.append(
+                {
+                    "종목코드": ticker,
+                    "종목명": name,
+                    "현재가": int(float(close.iloc[-1])),
+                    "1일(%)": ret_1d,
+                    "5일(%)": ret_5d,
+                    "20일(%)": ret_20d,
+                    "거래량비율": round(vol_ratio, 2),
+                    "변동성(%)": round(annual_vol, 1),
+                    "공격점수": round(score, 1),
+                }
+            )
+        else:
+            score = ret_20d * 1.2 + ret_5d * 0.8 + ret_1d * 0.4 + max(0.0, (vol_ratio - 1.0) * 5.0)
+            score = max(-100.0, min(100.0, score))
+            recommendation = "강력 매수" if score >= 25 else "매수" if score >= 10 else "관망"
+            results.append(
+                {
+                    "종목코드": ticker,
+                    "종목명": name,
+                    "현재가": int(float(close.iloc[-1])),
+                    "1일(%)": ret_1d,
+                    "5일(%)": ret_5d,
+                    "20일(%)": ret_20d,
+                    "종합점수": round(score, 1),
+                    "추천": recommendation,
+                }
+            )
+
+    if not results:
+        return pd.DataFrame()
+
+    score_col = "공격점수" if aggressive else "종합점수"
+    return pd.DataFrame(results).sort_values(score_col, ascending=False).head(result_count).reset_index(drop=True)
+
 BROKER_OPTIONS = {
     "한국투자증권 (KIS)": "KIS",
     "키움증권": "KIWOOM",
@@ -76,7 +143,7 @@ if st.session_state.get("_saved_broker"):
 with st.expander("증권사 API 설정", expanded=True):
     _broker_labels = list(BROKER_OPTIONS.keys())
     _default_idx = _broker_labels.index(_saved_broker_label) if _saved_broker_label in _broker_labels else 0
-    broker_label = st.selectbox("증권사 선택", _broker_labels, index=_default_idx)
+    broker_label = str(st.selectbox("증권사 선택", _broker_labels, index=_default_idx) or _broker_labels[0])
     broker_code = BROKER_OPTIONS[broker_label]
 
     if broker_code == "NH":
@@ -176,7 +243,7 @@ if api:
     with col1:
         st.markdown("**매수 주문**")
         buy_ticker = st.text_input("매수 종목코드", key="buy_ticker", placeholder="005930")
-        buy_qty = st.number_input("매수 수량", min_value=1, value=1, key="buy_qty")
+        buy_qty = int(st.number_input("매수 수량", min_value=1, value=1, key="buy_qty"))
         buy_price = st.number_input("매수 가격 (0=시장가)", min_value=0, value=0, key="buy_price")
         if st.button("매수 주문", type="primary", key="btn_buy"):
             with st.spinner("매수 주문 중..."):
@@ -193,7 +260,7 @@ if api:
     with col2:
         st.markdown("**매도 주문**")
         sell_ticker = st.text_input("매도 종목코드", key="sell_ticker", placeholder="005930")
-        sell_qty = st.number_input("매도 수량", min_value=1, value=1, key="sell_qty")
+        sell_qty = int(st.number_input("매도 수량", min_value=1, value=1, key="sell_qty"))
         sell_price = st.number_input("매도 가격 (0=시장가)", min_value=0, value=0, key="sell_price")
         if st.button("매도 주문", type="primary", key="btn_sell"):
             with st.spinner("매도 주문 중..."):
@@ -214,11 +281,13 @@ if api:
     trade_mode = st.radio("매매 모드", ["전략 기반", "적립식 매수 (DCA)"], horizontal=True, key="trade_mode")
 
     col1, col2 = st.columns(2)
+    strategy_name = list(AVAILABLE_STRATEGIES.keys())[0]
+    strategy_class = AVAILABLE_STRATEGIES[strategy_name]
     with col1:
         auto_ticker = st.text_input("감시 종목코드", value="005930", key="auto_ticker")
         if trade_mode == "전략 기반":
-            strategy_name = st.selectbox("매매 전략", list(AVAILABLE_STRATEGIES.keys()))
-        auto_qty = st.number_input("1회 매매 수량", min_value=1, value=1, key="auto_qty")
+            strategy_name = str(st.selectbox("매매 전략", list(AVAILABLE_STRATEGIES.keys())) or strategy_name)
+        auto_qty = int(st.number_input("1회 매매 수량", min_value=1, value=1, key="auto_qty"))
 
     with col2:
         if trade_mode == "전략 기반":
@@ -273,7 +342,7 @@ if api:
     sched_col1, sched_col2, sched_col3 = st.columns(3)
     with sched_col1:
         interval_map = {"1분": 60, "5분": 300, "15분": 900, "30분": 1800, "1시간": 3600}
-        interval_label = st.selectbox("실행 간격", list(interval_map.keys()), index=1, key="sched_interval")
+        interval_label = str(st.selectbox("실행 간격", list(interval_map.keys()), index=1, key="sched_interval") or "5분")
         interval_sec = interval_map[interval_label]
     with sched_col2:
         max_runs = st.number_input("최대 실행 횟수 (0=무제한)", min_value=0, value=0, step=1, key="sched_max_runs")
@@ -410,8 +479,8 @@ if api:
                 _c1, _c2 = st.columns(2)
                 with _c1:
                     _capital = st.number_input("투자금 (원)", min_value=100_000, value=1_000_000, step=100_000, key=f"{_p}capital", format="%d")
-                    _market = st.selectbox("시장", ["KOSPI", "KOSDAQ"], key=f"{_p}market")
-                    _mode = st.selectbox("추천 모드", ["일반 추천", "🔥 공격적 추천"], key=f"{_p}mode")
+                    _market = str(st.selectbox("시장", ["KOSPI", "KOSDAQ", "US"], key=f"{_p}market") or "KOSPI")
+                    _mode = str(st.selectbox("추천 모드", ["일반 추천", "🔥 공격적 추천"], key=f"{_p}mode") or "일반 추천")
                 with _c2:
                     _max_stocks = st.slider("최대 보유 종목", 1, 10, 5, key=f"{_p}max_stocks")
                     _max_per = st.slider("종목당 비중 (%)", 10, 50, 20, key=f"{_p}max_per")
@@ -421,11 +490,25 @@ if api:
                     _tp = st.slider("익절 (%)", 5, 50, 15, key=f"{_p}tp")
                 with _c4:
                     _daily_limit = st.slider("일일 손실 한도 (%)", 1, 20, 5, key=f"{_p}daily_limit")
+                _usdkrw = float(st.session_state.get(f"{_p}usdkrw", 1350.0))
+                if _market == "US":
+                    _usdkrw = float(
+                        st.number_input(
+                            "USD/KRW 환율 (시뮬레이션)",
+                            min_value=900.0,
+                            max_value=2000.0,
+                            value=float(st.session_state.get(f"{_p}usdkrw", 1350.0)),
+                            step=1.0,
+                            key=f"{_p}usdkrw",
+                        )
+                    )
 
                 st.warning(
                     f"⚠️ 투자금 {_capital:,}원, 최대 {_max_stocks}종목, "
                     f"손절 -{_sl}%, 익절 +{_tp}%, 일일한도 -{_daily_limit}%"
                 )
+                if _market == "US":
+                    st.info("US 시장은 현재 시뮬레이션 자동매매로 동작합니다. (추천/보유/손익 추적 지원)")
 
             _b1, _b2 = st.columns(2)
             with _b1:
@@ -442,23 +525,38 @@ if api:
                     with st.spinner("AI 스캔 중..."):
                         try:
                             if _mode == "🔥 공격적 추천":
-                                from analysis.recommender import recommend_aggressive_stocks
-                                _sdf = recommend_aggressive_stocks(market=_market, top_n=100, result_count=_max_stocks)
+                                if _market == "US":
+                                    _sdf = _recommend_us_stocks(top_n=50, result_count=_max_stocks, aggressive=True)
+                                else:
+                                    from analysis.recommender import recommend_aggressive_stocks
+
+                                    _sdf = recommend_aggressive_stocks(market=_market, top_n=100, result_count=_max_stocks)
                                 _sc = "공격점수"
                             else:
-                                from analysis.recommender import recommend_stocks
-                                _sdf = recommend_stocks(market=_market, top_n=50, result_count=_max_stocks)
+                                if _market == "US":
+                                    _sdf = _recommend_us_stocks(top_n=40, result_count=_max_stocks, aggressive=False)
+                                else:
+                                    from analysis.recommender import recommend_stocks
+
+                                    _sdf = recommend_stocks(market=_market, top_n=50, result_count=_max_stocks)
                                 _sc = "종합점수"
                             if _sdf.empty:
                                 st.error("스캔 결과 없음")
                             else:
                                 st.success(f"{len(_sdf)}개 종목 발견")
-                                _psc = int(_capital / len(_sdf))
+                                _capital_base = (float(_capital) / _usdkrw) if _market == "US" else float(_capital)
+                                _psc = int(_capital_base / len(_sdf))
                                 _plan = []
                                 for _, _r in _sdf.iterrows():
-                                    _pr = int(_r["현재가"])
-                                    _q = max(1, _psc // _pr) if _pr > 0 else 0
-                                    _plan.append({"종목명": _r["종목명"], "현재가": f"{_pr:,}", "점수": round(_r[_sc], 1), "수량": _q, "손절가": f"{int(_pr*(1-_sl/100)):,}", "익절가": f"{int(_pr*(1+_tp/100)):,}"})
+                                    _pr = float(_r["현재가"])
+                                    if _market != "US":
+                                        _pr = float(int(_pr))
+                                    _score = float(_r[_sc]) if _sc in _r else 0.0
+                                    _q = max(1, int(_psc // _pr)) if _pr > 0 else 0
+                                    _price_text = f"{_pr:,.2f}" if _market == "US" else f"{int(_pr):,}"
+                                    _sl_text = f"{(_pr * (1 - _sl / 100)):,.2f}" if _market == "US" else f"{int(_pr * (1 - _sl / 100)):,}"
+                                    _tp_text = f"{(_pr * (1 + _tp / 100)):,.2f}" if _market == "US" else f"{int(_pr * (1 + _tp / 100)):,}"
+                                    _plan.append({"종목명": str(_r["종목명"]), "현재가": _price_text, "점수": round(_score, 1), "수량": _q, "손절가": _sl_text, "익절가": _tp_text})
                                 st.dataframe(pd.DataFrame(_plan), use_container_width=True, hide_index=True)
                         except Exception as _e:
                             st.error(f"스캔 실패: {_e}")
@@ -468,56 +566,84 @@ if api:
                 st.success(f"🚀 AP-{_slot_idx+1} 동작 중...")
                 try:
                     if _mode == "🔥 공격적 추천":
-                        from analysis.recommender import recommend_aggressive_stocks
-                        _sdf = recommend_aggressive_stocks(market=_market, top_n=100, result_count=_max_stocks)
+                        if _market == "US":
+                            _sdf = _recommend_us_stocks(top_n=50, result_count=_max_stocks, aggressive=True)
+                        else:
+                            from analysis.recommender import recommend_aggressive_stocks
+
+                            _sdf = recommend_aggressive_stocks(market=_market, top_n=100, result_count=_max_stocks)
                         _sc = "공격점수"
                     else:
-                        from analysis.recommender import recommend_stocks
-                        _sdf = recommend_stocks(market=_market, top_n=50, result_count=_max_stocks)
+                        if _market == "US":
+                            _sdf = _recommend_us_stocks(top_n=40, result_count=_max_stocks, aggressive=False)
+                        else:
+                            from analysis.recommender import recommend_stocks
+
+                            _sdf = recommend_stocks(market=_market, top_n=50, result_count=_max_stocks)
                         _sc = "종합점수"
 
                     if not _sdf.empty:
                         _now = datetime.now().strftime("%H:%M:%S")
                         _h = st.session_state.get(f"{_p}holdings", {})
+                        _market_code = "US" if _market == "US" else "KR"
+                        _is_us_sim = _market == "US"
+                        _capital_base = (float(_capital) / _usdkrw) if _is_us_sim else float(_capital)
                         _dpnl = 0.0
                         for _, _r in _sdf.iterrows():
-                            _tk = _r["종목코드"]
-                            _pr = int(_r["현재가"])
+                            _tk = str(_r["종목코드"])
+                            _pr = float(_r["현재가"])
+                            if not _is_us_sim:
+                                _pr = float(int(_pr))
+                            _name = str(_r["종목명"])
                             if _tk in _h:
                                 _ent = _h[_tk]
                                 _pct = (_pr / _ent["avg_price"] - 1) * 100
-                                _dpnl += _pct * _ent["qty"] * _ent["avg_price"] / _capital * 100
+                                _dpnl += _pct * _ent["qty"] * _ent["avg_price"] / max(_capital_base, 1.0) * 100
                                 if _pct <= -_sl:
-                                    _res = api.sell_order(_tk, _ent["qty"], 0)
-                                    st.session_state["trade_log"].append(f"[{_now}] AP-{_slot_idx+1} 손절: {_r['종목명']} {_pct:+.1f}%")
+                                    _res = {"status": "success", "message": "US 시뮬레이션 매도"} if _is_us_sim else api.sell_order(_tk, _ent["qty"], 0)
+                                    st.session_state["trade_log"].append(f"[{_now}] AP-{_slot_idx+1} 손절: {_name} {_pct:+.1f}%")
                                     if _res.get("status") == "success":
-                                        add_trade(_tk, "KR", "SELL", 0, _ent["qty"], f"AP-{_slot_idx+1} 손절")
+                                        _strategy_note = f"AP-{_slot_idx+1} 손절" + (" (US 시뮬레이션)" if _is_us_sim else "")
+                                        add_trade(_tk, _market_code, "SELL", _pr, _ent["qty"], _strategy_note)
                                     del _h[_tk]
                                 elif _pct >= _tp:
-                                    _res = api.sell_order(_tk, _ent["qty"], 0)
-                                    st.session_state["trade_log"].append(f"[{_now}] AP-{_slot_idx+1} 익절: {_r['종목명']} {_pct:+.1f}%")
+                                    _res = {"status": "success", "message": "US 시뮬레이션 매도"} if _is_us_sim else api.sell_order(_tk, _ent["qty"], 0)
+                                    st.session_state["trade_log"].append(f"[{_now}] AP-{_slot_idx+1} 익절: {_name} {_pct:+.1f}%")
                                     if _res.get("status") == "success":
-                                        add_trade(_tk, "KR", "SELL", 0, _ent["qty"], f"AP-{_slot_idx+1} 익절")
+                                        _strategy_note = f"AP-{_slot_idx+1} 익절" + (" (US 시뮬레이션)" if _is_us_sim else "")
+                                        add_trade(_tk, _market_code, "SELL", _pr, _ent["qty"], _strategy_note)
                                     del _h[_tk]
                             else:
                                 if len(_h) < _max_stocks:
-                                    _ps = int(_capital * _max_per / 100)
-                                    _q = max(1, _ps // _pr) if _pr > 0 else 0
+                                    _ps = _capital_base * (_max_per / 100)
+                                    _q = max(1, int(_ps // _pr)) if _pr > 0 else 0
                                     if _q > 0:
-                                        _res = api.buy_order(_tk, _q, 0)
-                                        st.session_state["trade_log"].append(f"[{_now}] AP-{_slot_idx+1} 매수: {_r['종목명']} x{_q}")
+                                        _res = {"status": "success", "message": "US 시뮬레이션 매수"} if _is_us_sim else api.buy_order(_tk, _q, 0)
+                                        st.session_state["trade_log"].append(f"[{_now}] AP-{_slot_idx+1} 매수: {_name} x{_q}")
                                         if _res.get("status") == "success":
-                                            add_trade(_tk, "KR", "BUY", _pr, _q, f"AP-{_slot_idx+1} 매수")
-                                            _h[_tk] = {"avg_price": _pr, "qty": _q, "name": _r["종목명"]}
+                                            _strategy_note = f"AP-{_slot_idx+1} 매수" + (" (US 시뮬레이션)" if _is_us_sim else "")
+                                            add_trade(_tk, _market_code, "BUY", _pr, _q, _strategy_note)
+                                            _h[_tk] = {"avg_price": _pr, "qty": _q, "name": _name}
                         st.session_state[f"{_p}holdings"] = _h
                         if _dpnl <= -_daily_limit:
                             st.session_state[f"{_p}running"] = False
                             st.error(f"⚠️ AP-{_slot_idx+1} 일일 손실 한도 도달. 자동 중지.")
+                            _price_map = {str(row["종목코드"]): float(row["현재가"]) for _, row in _sdf.iterrows()}
                             for _t, _hh in list(_h.items()):
-                                api.sell_order(_t, _hh["qty"], 0)
+                                _raw_exit = _price_map.get(_t, _hh["avg_price"])
+                                _exit_price = float(_raw_exit if _raw_exit is not None else _hh["avg_price"])
+                                _res = {"status": "success", "message": "US 시뮬레이션 강제청산"}
+                                if not _is_us_sim:
+                                    _res = api.sell_order(_t, _hh["qty"], 0)
+                                st.session_state["trade_log"].append(
+                                    f"[{_now}] AP-{_slot_idx+1} 강제청산: {_hh['name']} x{_hh['qty']}"
+                                )
+                                if _res.get("status") == "success":
+                                    _strategy_note = f"AP-{_slot_idx+1} 강제청산" + (" (US 시뮬레이션)" if _is_us_sim else "")
+                                    add_trade(_t, _market_code, "SELL", _exit_price, _hh["qty"], _strategy_note)
                             st.session_state[f"{_p}holdings"] = {}
                         if _h:
-                            _hd = [{"종목명": v["name"], "매수가": f"{v['avg_price']:,}", "수량": v["qty"]} for v in _h.values()]
+                            _hd = [{"종목명": v["name"], "매수가": f"{v['avg_price']:,.2f}" if _is_us_sim else f"{int(v['avg_price']):,}", "수량": v["qty"]} for v in _h.values()]
                             st.dataframe(pd.DataFrame(_hd), use_container_width=True, hide_index=True)
                 except Exception as _e:
                     st.error(f"AP-{_slot_idx+1} 오류: {_e}")
@@ -553,6 +679,15 @@ if api:
         if user_msg := st.chat_input("오토파일럿에게 명령하세요...", key="ap_chat_input"):
             st.session_state["ap_chat_messages"].append({"role": "user", "content": user_msg})
 
+            ap_capital = int(st.session_state.get("ap_capital", 1_000_000))
+            ap_market = str(st.session_state.get("ap_market", "KOSPI"))
+            ap_mode = str(st.session_state.get("ap_mode", "일반 추천"))
+            ap_max_stocks = int(st.session_state.get("ap_max_stocks", 5))
+            ap_max_per_stock = int(st.session_state.get("ap_max_per_stock", 20))
+            ap_stop_loss = int(st.session_state.get("ap_stop_loss", 5))
+            ap_take_profit = int(st.session_state.get("ap_take_profit", 15))
+            ap_daily_loss_limit = int(st.session_state.get("ap_daily_limit", 5))
+
             _ap_system = (
                 "당신은 Archon 오토파일럿 트레이딩 AI 어시스턴트입니다. 한국어로 답변하세요.\n"
                 "사용자가 오토파일럿 설정을 변경하라고 요청하면, 정확한 JSON 명령을 응답에 포함하세요.\n"
@@ -571,8 +706,8 @@ if api:
             )
 
             try:
-                from openai import OpenAI
                 import json as _json
+                OpenAI = importlib.import_module("openai").OpenAI
                 client = OpenAI(api_key=ap_api_key)
 
                 _messages = [{"role": "system", "content": _ap_system}]
