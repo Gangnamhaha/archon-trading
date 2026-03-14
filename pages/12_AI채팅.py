@@ -32,7 +32,8 @@ chat_settings = load_user_preferences(username, "ai_chat")
 if "chat_messages" not in st.session_state or not st.session_state["chat_messages"]:
     st.session_state["chat_messages"] = load_chat_history(username, "general")
 if "openai_api_key" not in st.session_state:
-    st.session_state["openai_api_key"] = ""
+    from data.database import load_user_setting
+    st.session_state["openai_api_key"] = load_user_setting(username, "openai_api_key", "")
 if "tts_enabled" not in st.session_state:
     st.session_state["tts_enabled"] = bool(chat_settings.get("tts_enabled", False))
 if "stt_text" not in st.session_state:
@@ -52,8 +53,10 @@ if "tts_toggle" not in st.session_state:
 with st.sidebar:
     st.subheader("API 설정")
     api_key = st.text_input("OpenAI API Key", type="password", value=st.session_state["openai_api_key"], key="api_key_input")
-    if api_key:
+    if api_key and api_key != st.session_state["openai_api_key"]:
         st.session_state["openai_api_key"] = api_key
+        from data.database import save_user_setting
+        save_user_setting(username, "openai_api_key", api_key)
 
     st.markdown("---")
     model = st.selectbox("모델", ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"], key="chat_model")

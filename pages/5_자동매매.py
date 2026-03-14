@@ -550,11 +550,14 @@ if api:
     if "ap_chat_messages" not in st.session_state:
         st.session_state["ap_chat_messages"] = []
     if "ap_openai_key" not in st.session_state:
-        st.session_state["ap_openai_key"] = ""
+        from data.database import load_user_setting
+        st.session_state["ap_openai_key"] = load_user_setting(username, "openai_api_key", "")
 
     ap_api_key = st.text_input("OpenAI API Key", type="password", value=st.session_state["ap_openai_key"], key="ap_ai_key")
-    if ap_api_key:
+    if ap_api_key and ap_api_key != st.session_state["ap_openai_key"]:
         st.session_state["ap_openai_key"] = ap_api_key
+        from data.database import save_user_setting
+        save_user_setting(username, "openai_api_key", ap_api_key)
 
     if not ap_api_key:
         st.info("OpenAI API Key를 입력하면 AI 어시스턴트를 사용할 수 있습니다.")

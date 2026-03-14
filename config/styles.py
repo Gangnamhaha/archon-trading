@@ -201,15 +201,18 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
             if "guide_messages" not in st.session_state:
                 st.session_state["guide_messages"] = []
             if "guide_api_key" not in st.session_state:
-                st.session_state["guide_api_key"] = ""
+                from data.database import load_user_setting as _load_setting
+                st.session_state["guide_api_key"] = _load_setting(user["username"], "openai_api_key", "")
 
             st.markdown(_APP_GUIDE, unsafe_allow_html=True)
             st.markdown("---")
 
             g_key = st.text_input("OpenAI Key (선택)", type="password",
                                   value=st.session_state["guide_api_key"], key="_guide_key")
-            if g_key:
+            if g_key and g_key != st.session_state["guide_api_key"]:
                 st.session_state["guide_api_key"] = g_key
+                from data.database import save_user_setting as _save_setting
+                _save_setting(user["username"], "openai_api_key", g_key)
 
             if g_key:
                 for gm in st.session_state["guide_messages"][-6:]:
