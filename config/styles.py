@@ -438,3 +438,30 @@ def load_user_preferences(username: str, page: str) -> Dict[str, Any]:
 
 def show_legal_disclaimer():
     st.caption("⚠️ 본 서비스는 투자 참고용이며 투자자문에 해당하지 않습니다. 투자 결과의 책임은 이용자에게 있으며, 원금 손실이 발생할 수 있습니다.")
+
+
+def safe_run(func, fallback_msg="일시적 오류가 발생했습니다. 잠시 후 다시 시도해주세요."):
+    try:
+        return func()
+    except Exception as e:
+        st.error(f"{fallback_msg}")
+        with st.expander("오류 상세"):
+            st.code(str(e))
+        return None
+
+
+def safe_fetch(fetch_func, *args, **kwargs):
+    try:
+        result = fetch_func(*args, **kwargs)
+        if result is None:
+            st.warning("데이터를 가져올 수 없습니다. 잠시 후 다시 시도해주세요.")
+        return result
+    except ConnectionError:
+        st.error("네트워크 연결을 확인해주세요.")
+        return None
+    except TimeoutError:
+        st.error("서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.")
+        return None
+    except Exception as e:
+        st.error(f"데이터 로딩 실패: {type(e).__name__}")
+        return None

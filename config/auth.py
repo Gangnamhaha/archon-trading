@@ -433,6 +433,17 @@ def _show_login_form():
                         st.error("아이디 또는 비밀번호가 틀렸습니다.")
 
 
+def _check_session_expiry():
+    from datetime import datetime, timedelta
+    login_time = st.session_state.get("_login_time")
+    if login_time:
+        elapsed = (datetime.now() - login_time).total_seconds()
+        if elapsed > 86400:
+            st.session_state.clear()
+            st.warning("세션이 만료되었습니다. 다시 로그인해주세요.")
+            st.rerun()
+
+
 def require_auth():
     if not st.session_state.get("authenticated", False):
         _show_login_form()

@@ -12,6 +12,19 @@ import hashlib
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional
+import time as _time
+
+_rate_limits: dict = {}
+
+def _check_rate_limit(key: str, max_calls: int = 10, window: int = 60) -> bool:
+    now = _time.time()
+    if key not in _rate_limits:
+        _rate_limits[key] = []
+    _rate_limits[key] = [t for t in _rate_limits[key] if now - t < window]
+    if len(_rate_limits[key]) >= max_calls:
+        return False
+    _rate_limits[key].append(now)
+    return True
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "portfolio.db")
 
