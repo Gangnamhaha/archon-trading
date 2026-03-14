@@ -23,6 +23,7 @@ _PWA_META = """
 <meta property="og:url" content="https://archon-pro.streamlit.app">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Archon - AI 주식 자동매매 플랫폼">
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/app/static/sw.js').catch(()=>{});}</script>
 """
 
 _ANALYTICS_CODE = """
@@ -132,6 +133,21 @@ input,select,textarea{font-size:16px !important}
     .stSlider [role="slider"]{width:24px !important;height:24px !important}
     .stCheckbox label{padding:0.4rem 0 !important}
 }
+
+.mobile-bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#1A1F2E;border-top:1px solid rgba(0,212,170,0.2);z-index:999998;padding:0.3rem 0 env(safe-area-inset-bottom,0.3rem);box-shadow:0 -4px 12px rgba(0,0,0,0.4)}
+.mobile-bottom-nav .nav-items{display:flex;justify-content:space-around;align-items:center;max-width:500px;margin:0 auto}
+.mobile-bottom-nav .nav-item{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:#8892B0;font-size:0.65rem;padding:0.2rem 0.5rem;transition:color 0.2s}
+.mobile-bottom-nav .nav-item:hover{color:#00D4AA}
+.mobile-bottom-nav .nav-icon{font-size:1.2rem;margin-bottom:0.15rem}
+@media(max-width:768px){.mobile-bottom-nav{display:block !important}.main .block-container{padding-bottom:4.5rem !important}}
+
+@media(max-width:768px){
+.stMetric{background:rgba(26,31,46,0.8) !important;border:1px solid rgba(0,212,170,0.15) !important;border-radius:12px !important;padding:0.8rem !important;margin-bottom:0.4rem !important}
+[data-testid="stExpander"]{border:1px solid rgba(0,212,170,0.1) !important;border-radius:12px !important;margin-bottom:0.4rem !important}
+[data-testid="stExpander"] summary{padding:0.8rem !important;font-size:0.95rem !important}
+.stButton>button{border-radius:12px !important;font-weight:600 !important}
+.stSelectbox>div>div,.stTextInput>div>div,.stNumberInput>div>div{border-radius:10px !important;font-size:16px !important}
+}
 </style>"""
 
 
@@ -196,6 +212,17 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
         return
 
     st.markdown(_ANALYTICS_CODE, unsafe_allow_html=True)
+    st.markdown("""
+<div class="mobile-bottom-nav">
+<div class="nav-items">
+<a href="/" target="_self" class="nav-item"><span class="nav-icon">🏠</span>홈</a>
+<a href="/데이터분석" target="_self" class="nav-item"><span class="nav-icon">📊</span>분석</a>
+<a href="/자동매매" target="_self" class="nav-item"><span class="nav-icon">🤖</span>매매</a>
+<a href="/종목추천" target="_self" class="nav-item"><span class="nav-icon">🏆</span>추천</a>
+<a href="/AI채팅" target="_self" class="nav-item"><span class="nav-icon">💬</span>AI</a>
+</div>
+</div>
+""", unsafe_allow_html=True)
 
     from data.database import log_activity
     _caller = inspect.stack()[1].filename
