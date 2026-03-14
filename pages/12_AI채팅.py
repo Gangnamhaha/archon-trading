@@ -2,6 +2,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
+import streamlit.components.v1 as components
 from config.styles import inject_pro_css
 from config.auth import require_auth
 
@@ -10,10 +11,28 @@ require_auth()
 inject_pro_css()
 st.title("💬 AI 채팅")
 
+
+def tts_speak(text: str, lang: str = "ko-KR"):
+    safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$").replace('"', '\\"').replace("\n", " ")
+    components.html(f"""
+    <script>
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance("{safe}");
+    u.lang = "{lang}";
+    u.rate = 1.0;
+    window.speechSynthesis.speak(u);
+    </script>
+    """, height=0)
+
+
 if "chat_messages" not in st.session_state:
     st.session_state["chat_messages"] = []
 if "openai_api_key" not in st.session_state:
     st.session_state["openai_api_key"] = ""
+if "tts_enabled" not in st.session_state:
+    st.session_state["tts_enabled"] = False
+if "stt_text" not in st.session_state:
+    st.session_state["stt_text"] = ""
 
 with st.sidebar:
     st.subheader("API 설정")
@@ -32,6 +51,10 @@ with st.sidebar:
     )
 
     st.markdown("---")
+    st.subheader("음성 설정")
+    st.session_state["tts_enabled"] = st.toggle("🔊 AI 응답 자동 읽기 (TTS)", value=st.session_state["tts_enabled"], key="tts_toggle")
+
+    st.markdown("---")
     if st.button("대화 초기화", use_container_width=True, key="chat_clear"):
         st.session_state["chat_messages"] = []
         st.rerun()
@@ -48,11 +71,69 @@ if not st.session_state["openai_api_key"]:
     """)
     st.stop()
 
-for msg in st.session_state["chat_messages"]:
+for idx, msg in enumerate(st.session_state["chat_messages"]):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+        if msg["role"] == "assistant":
+            if st.button("🔊", key=f"tts_{idx}", help="이 응답을 음성으로 읽기"):
+                tts_speak(msg["content"])
 
-if prompt := st.chat_input("메시지를 입력하세요..."):
+stt_col1, stt_col2 = st.columns([1, 8])
+with stt_col1:
+    try:
+        from streamlit_mic_recorder import speech_to_text
+        stt_result = speech_to_text(
+            language="ko",
+            start_prompt="🎤",
+            stop_prompt="⏹️",
+            just_once=True,
+            use_container_width=True,
+            key="stt_main",
+        )
+        if stt_result:
+            st.session_state["stt_text"] = stt_result
+    except ImportError:
+        if st.button("🎤", help="streamlit-mic-recorder 패키지 필요", key="stt_fallback"):
+            st.toast("음성입력에는 streamlit-mic-recorder 패키지가 필요합니다.")
+
+with stt_col2:
+    if st.session_state["stt_text"]:
+        st.info(f"🎤 인식된 텍스트: **{st.session_state['stt_text']}**")
+
+prompt_value = st.session_state.get("stt_text", "")
+if prompt := st.chat_input("메시지를 입력하세요 (🎤 음성입력도 가능)", key="chat_input_main"):
+    prompt_value = prompt
+
+if st.session_state["stt_text"] and not prompt:
+    prompt_value = st.session_state["stt_text"]
+    st.session_state["stt_text"] = ""
+
+    st.session_state["chat_messages"].append({"role": "user", "content": prompt_value})
+    with st.chat_message("user"):
+        st.markdown(prompt_value)
+
+    with st.chat_message("assistant"):
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=st.session_state["openai_api_key"])
+            messages = [{"role": "system", "content": system_prompt}]
+            for m in st.session_state["chat_messages"]:
+                messages.append({"role": m["role"], "content": m["content"]})
+            with st.spinner("AI 응답 생성 중..."):
+                response = client.chat.completions.create(
+                    model=model, messages=messages,
+                    temperature=temperature, max_tokens=4096,
+                )
+                reply = response.choices[0].message.content
+            st.markdown(reply)
+            st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
+            if st.session_state["tts_enabled"]:
+                tts_speak(reply)
+        except Exception as e:
+            st.error(f"오류: {e}")
+    st.rerun()
+
+elif prompt:
     st.session_state["chat_messages"].append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -61,25 +142,22 @@ if prompt := st.chat_input("메시지를 입력하세요..."):
         try:
             from openai import OpenAI
             client = OpenAI(api_key=st.session_state["openai_api_key"])
-
             messages = [{"role": "system", "content": system_prompt}]
             for m in st.session_state["chat_messages"]:
                 messages.append({"role": m["role"], "content": m["content"]})
-
             with st.spinner("AI 응답 생성 중..."):
                 response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=4096,
+                    model=model, messages=messages,
+                    temperature=temperature, max_tokens=4096,
                 )
                 reply = response.choices[0].message.content
-
             st.markdown(reply)
             st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
+            if st.session_state["tts_enabled"]:
+                tts_speak(reply)
         except Exception as e:
             error_msg = str(e)
             if "api_key" in error_msg.lower() or "auth" in error_msg.lower():
-                st.error("API Key가 유효하지 않습니다. 사이드바에서 다시 입력하세요.")
+                st.error("API Key가 유효하지 않습니다.")
             else:
                 st.error(f"오류: {error_msg}")
