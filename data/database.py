@@ -159,6 +159,18 @@ def init_db():
         )
     """)
 
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_settings_user ON user_settings(username)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history(username, chat_type)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log(username)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(username)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_trade_history_ticker ON trade_history(ticker)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_ticker ON portfolio(ticker)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_referral_owner ON referral_codes(owner_username)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_notices_created ON notices(created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_newsletter_email ON newsletter_subscribers(email)")
+
     conn.commit()
     conn.close()
 

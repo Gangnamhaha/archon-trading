@@ -4,6 +4,7 @@
 - 한국 주식: pykrx
 """
 import pandas as pd
+from functools import lru_cache
 import yfinance as yf
 from pykrx import stock as krx
 from datetime import datetime, timedelta
@@ -69,6 +70,7 @@ def fetch_kr_stock(ticker: str, start: str = None, end: str = None, period: str 
         return pd.DataFrame()
 
 
+@lru_cache(maxsize=128)
 def fetch_stock(ticker: str, market: str = "US", period: str = "1y") -> pd.DataFrame:
     """통합 주가 조회 함수"""
     if market.upper() == "US":

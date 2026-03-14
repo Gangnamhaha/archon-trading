@@ -3,6 +3,7 @@ import numpy as np
 from typing import Optional
 from pykrx import stock as krx
 from datetime import datetime, timedelta
+from functools import lru_cache
 from itertools import product
 from analysis.technical import (
     calc_rsi, calc_macd, calc_sma, calc_bollinger,
@@ -11,6 +12,7 @@ from analysis.technical import (
 )
 
 
+@lru_cache(maxsize=256)
 def _fetch_ohlcv(ticker: str, days: int = 120) -> pd.DataFrame:
     today = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
