@@ -513,6 +513,94 @@ if api:
 
     st.markdown("---")
 
+    st.subheader("🤖 AI 트레이딩 어시스턴트")
+    st.caption("자연어로 오토파일럿을 제어하세요. 예: '손절을 3%로 바꿔줘', '종목 수를 3개로 줄여', '공격적 모드로 전환'")
+
+    if "ap_chat_messages" not in st.session_state:
+        st.session_state["ap_chat_messages"] = []
+    if "ap_openai_key" not in st.session_state:
+        st.session_state["ap_openai_key"] = ""
+
+    ap_api_key = st.text_input("OpenAI API Key", type="password", value=st.session_state["ap_openai_key"], key="ap_ai_key")
+    if ap_api_key:
+        st.session_state["ap_openai_key"] = ap_api_key
+
+    if not ap_api_key:
+        st.info("OpenAI API Key를 입력하면 AI 어시스턴트를 사용할 수 있습니다.")
+    else:
+        chat_container = st.container(height=400)
+        with chat_container:
+            for msg in st.session_state["ap_chat_messages"]:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+        if user_msg := st.chat_input("오토파일럿에게 명령하세요...", key="ap_chat_input"):
+            st.session_state["ap_chat_messages"].append({"role": "user", "content": user_msg})
+
+            _ap_system = (
+                "당신은 Archon 오토파일럿 트레이딩 AI 어시스턴트입니다. 한국어로 답변하세요.\n"
+                "사용자가 오토파일럿 설정을 변경하라고 요청하면, 정확한 JSON 명령을 응답에 포함하세요.\n"
+                "JSON 형식: {\"action\": \"update_config\", \"changes\": {\"key\": value}}\n"
+                "변경 가능한 키: ap_capital(투자금), ap_market(KOSPI/KOSDAQ), ap_mode(일반 추천/공격적 추천), "
+                "ap_max_stocks(최대종목수 1-10), ap_max_per_stock(종목당비중 10-50%), "
+                "ap_stop_loss(손절 1-20%), ap_take_profit(익절 5-50%), ap_daily_limit(일일손실한도 1-20%)\n"
+                "다른 키: ap_start(오토파일럿 시작), ap_stop(오토파일럿 중지)\n\n"
+                f"현재 설정: 투자금={ap_capital:,}원, 시장={ap_market}, 모드={ap_mode}, "
+                f"최대종목={ap_max_stocks}, 종목당비중={ap_max_per_stock}%, "
+                f"손절={ap_stop_loss}%, 익절={ap_take_profit}%, 일일한도={ap_daily_loss_limit}%\n"
+                f"오토파일럿 상태: {'동작중' if st.session_state['autopilot_running'] else '중지'}\n"
+                f"현재 보유종목: {len(st.session_state.get('autopilot_holdings', {}))}개\n\n"
+                "설정 변경이 아닌 일반 투자 질문에도 친절하게 답변하세요.\n"
+                "설정 변경 시 반드시 변경 내용을 확인하는 문장도 포함하세요."
+            )
+
+            try:
+                from openai import OpenAI
+                import json as _json
+                client = OpenAI(api_key=ap_api_key)
+
+                _messages = [{"role": "system", "content": _ap_system}]
+                for m in st.session_state["ap_chat_messages"]:
+                    _messages.append({"role": m["role"], "content": m["content"]})
+
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=_messages,
+                    temperature=0.3,
+                    max_tokens=1024,
+                )
+                reply = response.choices[0].message.content
+                st.session_state["ap_chat_messages"].append({"role": "assistant", "content": reply})
+
+                if "{\"action\"" in reply:
+                    try:
+                        json_start = reply.index("{\"action\"")
+                        json_end = reply.index("}", json_start) + 1
+                        cmd = _json.loads(reply[json_start:json_end])
+                        if cmd.get("action") == "update_config":
+                            for k, v in cmd.get("changes", {}).items():
+                                if k == "ap_start":
+                                    st.session_state["autopilot_running"] = True
+                                elif k == "ap_stop":
+                                    st.session_state["autopilot_running"] = False
+                                elif k in ("ap_capital", "ap_max_stocks", "ap_max_per_stock",
+                                           "ap_stop_loss", "ap_take_profit", "ap_daily_limit"):
+                                    st.session_state[k] = v
+                                elif k == "ap_market":
+                                    st.session_state["ap_market"] = v
+                                elif k == "ap_mode":
+                                    st.session_state["ap_mode"] = v
+                    except (ValueError, _json.JSONDecodeError):
+                        pass
+
+            except Exception as e:
+                error_reply = f"오류가 발생했습니다: {e}"
+                st.session_state["ap_chat_messages"].append({"role": "assistant", "content": error_reply})
+
+            st.rerun()
+
+    st.markdown("---")
+
     st.subheader("거래 로그")
     if st.session_state["trade_log"]:
         for log in reversed(st.session_state["trade_log"][-20:]):
