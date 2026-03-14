@@ -58,8 +58,25 @@ BROKER_OPTIONS = {
     "NH투자증권": "NH",
 }
 
+_broker_saved = load_user_preferences(username, "broker_api")
+if "broker_app_key" not in st.session_state and _broker_saved:
+    st.session_state["broker_app_key"] = _broker_saved.get("app_key", "")
+    st.session_state["broker_secret"] = _broker_saved.get("app_secret", "")
+    st.session_state["broker_account"] = _broker_saved.get("account_no", "")
+    st.session_state["_saved_broker"] = _broker_saved.get("broker", "")
+    st.session_state["_saved_mode"] = _broker_saved.get("trading_mode", "모의투자")
+
+_saved_broker_label = None
+if st.session_state.get("_saved_broker"):
+    for lbl, code in BROKER_OPTIONS.items():
+        if code == st.session_state["_saved_broker"]:
+            _saved_broker_label = lbl
+            break
+
 with st.expander("증권사 API 설정", expanded=True):
-    broker_label = st.selectbox("증권사 선택", list(BROKER_OPTIONS.keys()))
+    _broker_labels = list(BROKER_OPTIONS.keys())
+    _default_idx = _broker_labels.index(_saved_broker_label) if _saved_broker_label in _broker_labels else 0
+    broker_label = st.selectbox("증권사 선택", _broker_labels, index=_default_idx)
     broker_code = BROKER_OPTIONS[broker_label]
 
     if broker_code == "NH":
@@ -68,6 +85,8 @@ with st.expander("증권사 API 설정", expanded=True):
             "QV Open API (Windows COM)만 지원되어 웹 환경에서는 사용할 수 없습니다."
         )
     else:
+        _mode_options = ["모의투자", "실전투자"]
+        _default_mode = _mode_options.index(st.session_state.get("_saved_mode", "모의투자")) if st.session_state.get("_saved_mode") in _mode_options else 0
         col1, col2 = st.columns(2)
         with col1:
             app_key = st.text_input("App Key", type="password", key="broker_app_key")
@@ -78,7 +97,7 @@ with st.expander("증권사 API 설정", expanded=True):
                 type="password",
                 key="broker_secret",
             )
-            trading_mode = st.selectbox("거래 모드", ["모의투자", "실전투자"])
+            trading_mode = st.selectbox("거래 모드", _mode_options, index=_default_mode)
 
         if broker_code == "KIS":
             base_url = (
@@ -103,6 +122,13 @@ with st.expander("증권사 API 설정", expanded=True):
                     api.get_access_token()
                     st.session_state["broker_api"] = api
                     st.session_state["broker_name"] = broker_label
+                    save_user_preferences(username, "broker_api", {
+                        "broker": broker_code,
+                        "app_key": app_key,
+                        "app_secret": app_secret,
+                        "account_no": account_no,
+                        "trading_mode": trading_mode,
+                    })
                     st.success(f"{broker_label} API 연결 성공! (모드: {trading_mode})")
                 except Exception as e:
                     st.error(f"연결 실패: {e}")
