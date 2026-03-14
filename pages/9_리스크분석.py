@@ -9,7 +9,7 @@ import plotly.express as px
 from data.fetcher import fetch_stock
 from analysis.risk import calc_risk_metrics, calc_var, calc_beta_alpha, calc_efficient_frontier
 from analysis.monte_carlo import run_monte_carlo
-from config.styles import inject_pro_css
+from config.styles import inject_pro_css, show_legal_disclaimer
 from config.auth import require_pro
 
 st.set_page_config(page_title="Risk Analysis", page_icon="", layout="wide")
@@ -336,3 +336,5 @@ with tab4:
             liq_price = entry_price * (1 - 1 / leverage)
             drop_pct = 100 / leverage
             st.metric("Estimated Margin Call Price", f"{liq_price:,.2f}", f"-{drop_pct:.2f}% from entry")
+
+show_legal_disclaimer()

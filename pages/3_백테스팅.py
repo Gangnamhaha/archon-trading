@@ -14,7 +14,7 @@ from analysis.backtest import (
     golden_cross_strategy, rsi_strategy, macd_strategy, bollinger_strategy,
     volatility_breakout_strategy, aggressive_momentum_strategy
 )
-from config.styles import inject_pro_css
+from config.styles import inject_pro_css, show_legal_disclaimer
 from config.auth import require_pro
 
 st.set_page_config(page_title="백테스팅", page_icon="🔬", layout="wide")
@@ -237,3 +237,5 @@ if st.button("모든 전략 비교 실행", use_container_width=True):
 
             import pandas as pd
             st.dataframe(pd.DataFrame(results_table), use_container_width=True)
+
+show_legal_disclaimer()

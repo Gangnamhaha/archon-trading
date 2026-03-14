@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from data.fetcher import fetch_stock
 from analysis.ai_predict import predict_ensemble
-from config.styles import inject_pro_css
+from config.styles import inject_pro_css, show_legal_disclaimer
 from config.auth import require_pro
 
 st.set_page_config(page_title="AI Prediction", page_icon="", layout="wide")
@@ -108,3 +108,5 @@ if st.sidebar.button("Run Prediction", type="primary", use_container_width=True)
             st.warning("AI predictions are for reference only and do not guarantee future returns.")
 else:
     st.info("Set parameters and click 'Run Prediction'.")
+
+show_legal_disclaimer()

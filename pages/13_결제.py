@@ -199,3 +199,12 @@ if submitted:
         st.rerun()
     else:
         st.error(message)
+
+st.markdown("---")
+with st.expander("📋 환불 정책"):
+    st.markdown("""
+    - 전자상거래법에 따라 결제 후 **7일 이내** 청약철회 가능
+    - 이미 이용한 기간은 **일할 계산**하여 차감
+    - 환불 요청: 관리자에게 문의
+    - 무료 체험(추천인 리워드) 기간은 환불 대상 아님
+    """)

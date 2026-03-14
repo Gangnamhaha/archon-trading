@@ -267,3 +267,7 @@ def load_user_preferences(username: str, page: str) -> Dict[str, Any]:
         except (json.JSONDecodeError, TypeError):
             pass
     return {}
+
+
+def show_legal_disclaimer():
+    st.caption("⚠️ 본 서비스는 투자 참고용이며 투자자문에 해당하지 않습니다. 투자 결과의 책임은 이용자에게 있으며, 원금 손실이 발생할 수 있습니다.")

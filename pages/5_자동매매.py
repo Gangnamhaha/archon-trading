@@ -11,7 +11,7 @@ from trading.nh_api import NHApi
 from trading.strategy import AVAILABLE_STRATEGIES
 from data.fetcher import fetch_kr_stock
 from data.database import add_trade, get_trades
-from config.styles import inject_pro_css, load_user_preferences, save_user_preferences
+from config.styles import inject_pro_css, load_user_preferences, save_user_preferences, show_legal_disclaimer
 from config.auth import require_pro
 
 st.set_page_config(page_title="자동매매", page_icon="🤖", layout="wide")
@@ -631,6 +631,8 @@ if api:
         else:
             st.info("거래 이력이 없습니다.")
 
+    show_legal_disclaimer()
+
 else:
     st.info("위에서 증권사를 선택하고 API 키를 입력한 뒤 연결하세요.")
     st.markdown("""
@@ -650,3 +652,5 @@ else:
     - REST API 미지원 (QV Open API: Windows COM 전용)
     - 웹 환경에서는 사용할 수 없습니다.
     """)
+
+    show_legal_disclaimer()

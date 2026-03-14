@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 import pandas as pd
-from config.styles import inject_pro_css
+from config.styles import inject_pro_css, show_legal_disclaimer
 from config.auth import require_pro
 
 st.set_page_config(page_title="종목추천", page_icon="🏆", layout="wide")
@@ -307,3 +307,5 @@ if "recommend_result" in st.session_state:
     | **추세 일관성** | 15% | 최근 10일간 5일선이 20일선 위에 있는 비율 |
     | **변동성 패널티** | 10% | 연환산 변동성이 높을수록 감점 |
     """)
+
+show_legal_disclaimer()

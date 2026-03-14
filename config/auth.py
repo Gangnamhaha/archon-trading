@@ -398,10 +398,13 @@ def _show_login_form():
         with st.form("login_form"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
+            agree = st.checkbox("이용약관 및 개인정보처리방침에 동의합니다", key="login_agree")
             submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
 
             if submitted:
-                if not username or not password:
+                if not agree:
+                    st.warning("약관에 동의해야 로그인할 수 있습니다.")
+                elif not username or not password:
                     st.error("모든 필드를 입력하세요.")
                 else:
                     user = verify_user(username, password)
