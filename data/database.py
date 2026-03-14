@@ -141,6 +141,24 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            subscribed_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            author TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -504,6 +522,43 @@ def get_trades(ticker: Optional[str] = None, limit: int = 100) -> pd.DataFrame:
             "SELECT * FROM trade_history ORDER BY timestamp DESC LIMIT ?",
             conn, params=[limit]
         )
+    conn.close()
+    return df
+
+
+def subscribe_newsletter(email: str) -> bool:
+    init_db()
+    conn = get_connection()
+    try:
+        conn.execute("INSERT INTO newsletter_subscribers (email) VALUES (?)", (email,))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        conn.close()
+        return False
+
+
+def get_newsletter_subscribers() -> pd.DataFrame:
+    init_db()
+    conn = get_connection()
+    df = pd.read_sql_query("SELECT email, subscribed_at FROM newsletter_subscribers ORDER BY id DESC", conn)
+    conn.close()
+    return df
+
+
+def add_notice(title: str, content: str, author: str):
+    init_db()
+    conn = get_connection()
+    conn.execute("INSERT INTO notices (title, content, author) VALUES (?, ?, ?)", (title, content, author))
+    conn.commit()
+    conn.close()
+
+
+def get_notices(limit: int = 20) -> pd.DataFrame:
+    init_db()
+    conn = get_connection()
+    df = pd.read_sql_query("SELECT * FROM notices ORDER BY id DESC LIMIT ?", conn, params=[limit])
     conn.close()
     return df
 

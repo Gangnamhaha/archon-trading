@@ -1,4 +1,5 @@
 import inspect
+import importlib
 import json
 import os
 from typing import Any, Dict
@@ -14,6 +15,19 @@ _PWA_META = """
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <link rel="manifest" href="app/static/manifest.json">
 <link rel="apple-touch-icon" sizes="192x192" href="app/static/icon-192.png">
+<meta name="description" content="Archon - AI 기반 주식 자동매매 플랫폼. 종목추천, 오토파일럿, 백테스팅, 리스크분석.">
+<meta name="keywords" content="주식,자동매매,AI,종목추천,오토파일럿,한국투자증권,키움증권">
+<meta property="og:title" content="Archon - AI 주식 자동매매 플랫폼">
+<meta property="og:description" content="AI가 종목 추천부터 매매까지 자동화합니다.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://archon-pro.streamlit.app">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Archon - AI 주식 자동매매 플랫폼">
+"""
+
+_ANALYTICS_CODE = """
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-XXXXXXXXXX');</script>
 """
 
 _PRO_CSS = """<style>
@@ -181,6 +195,8 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
     if not user:
         return
 
+    st.markdown(_ANALYTICS_CODE, unsafe_allow_html=True)
+
     from data.database import log_activity
     _caller = inspect.stack()[1].filename
     _page_name = os.path.basename(_caller).replace(".py", "")
@@ -193,8 +209,9 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
         if show_logout:
             st.markdown("---")
             if st.button("Logout", key="_global_logout", use_container_width=True):
-                from config.auth import logout
-                logout()
+                st.session_state["authenticated"] = False
+                st.session_state["user"] = None
+                st.rerun()
 
         st.markdown("---")
         with st.expander("🤖 앱 가이드", expanded=False):
@@ -223,8 +240,7 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
                 if g_input and st.button("전송", key="_guide_send", use_container_width=True):
                     st.session_state["guide_messages"].append({"role": "user", "content": g_input})
                     try:
-                        from openai import OpenAI
-                        _client = OpenAI(api_key=g_key)
+                        _client = importlib.import_module("openai").OpenAI(api_key=g_key)
                         _msgs = [{"role": "system", "content": _GUIDE_SYSTEM_PROMPT}]
                         for gm in st.session_state["guide_messages"][-10:]:
                             _msgs.append({"role": gm["role"], "content": gm["content"]})
@@ -251,6 +267,19 @@ def show_toast(message: str, toast_type: str = "success"):
 def show_skeleton(count: int = 3):
     for _ in range(count):
         st.markdown('<div class="skeleton-loader"></div>', unsafe_allow_html=True)
+
+
+def show_share_buttons():
+    _url = "https://archon-pro.streamlit.app"
+    _c1, _c2, _c3 = st.columns(3)
+    with _c1:
+        st.link_button("💬 카카오톡 공유", f"https://sharer.kakao.com/talk/friends/picker/link?url={_url}", use_container_width=True)
+    with _c2:
+        st.link_button("🐦 트위터 공유", f"https://twitter.com/intent/tweet?text=Archon%20AI&url={_url}", use_container_width=True)
+    with _c3:
+        if st.button("🔗 링크 복사", use_container_width=True, key="_share_copy"):
+            st.code(_url)
+            st.toast("링크가 표시되었습니다!")
 
 
 def save_user_preferences(username: str, page: str, settings: Dict[str, Any]):

@@ -393,6 +393,23 @@ def _show_login_form():
         <p style="color:#A0AEC0">AI 주식자동매매플랫폼</p>
     </div>""", unsafe_allow_html=True)
 
+    from config.styles import show_share_buttons
+    show_share_buttons()
+    st.markdown("---")
+    st.markdown("### 📧 뉴스레터 구독")
+    _nl1, _nl2 = st.columns([3, 1])
+    with _nl1:
+        _nl_email = st.text_input("이메일", placeholder="your@email.com", key="_nl_email", label_visibility="collapsed")
+    with _nl2:
+        if st.button("구독", type="primary", use_container_width=True, key="_nl_sub"):
+            if _nl_email and "@" in _nl_email:
+                from data.database import subscribe_newsletter
+                if subscribe_newsletter(_nl_email):
+                    st.success("구독 완료!")
+                else:
+                    st.info("이미 구독 중입니다.")
+    st.markdown("---")
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.form("login_form"):
