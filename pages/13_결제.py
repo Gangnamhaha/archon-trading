@@ -125,45 +125,166 @@ plan_df = pd.DataFrame(
 st.subheader("플랜 비교")
 st.table(plan_df)
 
-st.subheader("요금제")
-price_col1, price_col2 = st.columns(2)
+st.subheader("결제 수단")
+pay_method = st.selectbox("결제 수단 선택", [
+    "Stripe (해외 카드)",
+    "토스페이먼츠 (카드/계좌이체/카카오페이)",
+    "아임포트 Portone (통합 PG)",
+    "카카오페이 (간편결제)",
+])
 
-with price_col1:
-    st.markdown("### 월간")
-    st.markdown("## 월 99,000원")
-    if stripe_api_key and stripe is not None:
-        if st.button("결제하기 (월간)", type="primary", use_container_width=True):
+def _show_pricing():
+    p1, p2 = st.columns(2)
+    with p1:
+        st.markdown("### 월간\n## 월 99,000원")
+    with p2:
+        st.markdown("### 연간\n## 연 990,000원 (2개월 무료)")
+
+if pay_method == "토스페이먼츠 (카드/계좌이체/카카오페이)":
+    st.subheader("요금제")
+    _show_pricing()
+    toss_client_key = st.secrets.get("TOSS_CLIENT_KEY", "")
+    if toss_client_key:
+        import streamlit.components.v1 as components
+        _toss_html = f"""
+        <script src="https://js.tosspayments.com/v1/payment"></script>
+        <button onclick="tossPayment()" style="width:100%;padding:14px;background:#0064FF;color:white;border:none;border-radius:8px;font-size:16px;font-weight:bold;cursor:pointer;">토스페이먼츠로 결제</button>
+        <script>
+        var tossPayments = TossPayments(\'{toss_client_key}\');
+        function tossPayment() {{
+            tossPayments.requestPayment(\'카드\', {{
+                amount: 99000,
+                orderId: \'archon-{user["username"]}-\' + Date.now(),
+                orderName: \'Archon Pro 월간 플랜\',
+                customerName: \'{user["username"]}\',
+                successUrl: window.location.origin + \'?payment=success\',
+                failUrl: window.location.origin + \'?payment=fail\',
+            }});
+        }}
+        </script>
+        """
+        components.html(_toss_html, height=70)
+    else:
+        st.warning("토스페이먼츠 키 미설정. `.streamlit/secrets.toml`에 `TOSS_CLIENT_KEY`를 추가하세요.")
+        if st.button("데모 결제 (토스)", type="primary", use_container_width=True, key="toss_demo"):
+            update_user_plan(user["id"], "pro")
+            st.success("데모 결제 완료! Pro 업그레이드됨.")
+            st.rerun()
+
+elif pay_method == "아임포트 Portone (통합 PG)":
+    st.subheader("요금제")
+    _show_pricing()
+    portone_code = st.secrets.get("PORTONE_IMP_CODE", "")
+    if portone_code:
+        import streamlit.components.v1 as components
+        _portone_html = f"""
+        <script src="https://cdn.iamport.kr/v1/iamport.js"></script>
+        <button onclick="portonePayment()" style="width:100%;padding:14px;background:#FF6B35;color:white;border:none;border-radius:8px;font-size:16px;font-weight:bold;cursor:pointer;">아임포트로 결제</button>
+        <script>
+        var IMP = window.IMP;
+        IMP.init(\'{portone_code}\');
+        function portonePayment() {{
+            IMP.request_pay({{
+                pg: \'html5_inicis\',
+                pay_method: \'card\',
+                merchant_uid: \'archon-{user["username"]}-\' + Date.now(),
+                name: \'Archon Pro 월간 플랜\',
+                amount: 99000,
+                buyer_name: \'{user["username"]}\',
+            }}, function(rsp) {{
+                if (rsp.success) {{
+                    window.location.href = window.location.origin + \'?payment=success\';
+                }} else {{
+                    alert(\'결제 실패: \' + rsp.error_msg);
+                }}
+            }});
+        }}
+        </script>
+        """
+        components.html(_portone_html, height=70)
+    else:
+        st.warning("아임포트 코드 미설정. `.streamlit/secrets.toml`에 `PORTONE_IMP_CODE`를 추가하세요.")
+        if st.button("데모 결제 (아임포트)", type="primary", use_container_width=True, key="portone_demo"):
+            update_user_plan(user["id"], "pro")
+            st.success("데모 결제 완료! Pro 업그레이드됨.")
+            st.rerun()
+
+elif pay_method == "카카오페이 (간편결제)":
+    st.subheader("요금제")
+    _show_pricing()
+    kakao_admin_key = st.secrets.get("KAKAO_ADMIN_KEY", "")
+    if kakao_admin_key:
+        import requests as _req
+        if st.button("카카오페이로 결제", type="primary", use_container_width=True, key="kakao_pay"):
             try:
-                checkout = _create_checkout_session("monthly")
-                st.link_button("Stripe Checkout으로 이동", checkout.url, use_container_width=True)
-                st.markdown(
-                    f"<script>window.location.href='{checkout.url}';</script>",
-                    unsafe_allow_html=True,
-                )
+                _headers = {"Authorization": f"KakaoAK {kakao_admin_key}", "Content-Type": "application/x-www-form-urlencoded"}
+                _data = {
+                    "cid": "TC0ONETIME",
+                    "partner_order_id": f"archon-{user['username']}",
+                    "partner_user_id": user["username"],
+                    "item_name": "Archon Pro 월간 플랜",
+                    "quantity": 1,
+                    "total_amount": 99000,
+                    "tax_free_amount": 0,
+                    "approval_url": st.secrets.get("APP_BASE_URL", "http://localhost:8501") + "?payment=success",
+                    "cancel_url": st.secrets.get("APP_BASE_URL", "http://localhost:8501") + "?payment=cancel",
+                    "fail_url": st.secrets.get("APP_BASE_URL", "http://localhost:8501") + "?payment=fail",
+                }
+                _resp = _req.post("https://kapi.kakao.com/v1/payment/ready", headers=_headers, data=_data)
+                _result = _resp.json()
+                if "next_redirect_pc_url" in _result:
+                    st.link_button("카카오페이 결제 페이지로 이동", _result["next_redirect_pc_url"], use_container_width=True)
+                else:
+                    st.error(f"카카오페이 오류: {_result}")
             except Exception as e:
-                st.error(f"결제 세션 생성 실패: {e}")
+                st.error(f"카카오페이 연동 실패: {e}")
+    else:
+        st.warning("카카오페이 키 미설정. `.streamlit/secrets.toml`에 `KAKAO_ADMIN_KEY`를 추가하세요.")
+        if st.button("데모 결제 (카카오페이)", type="primary", use_container_width=True, key="kakao_demo"):
+            update_user_plan(user["id"], "pro")
+            st.success("데모 결제 완료! Pro 업그레이드됨.")
+            st.rerun()
 
-with price_col2:
-    st.markdown("### 연간")
-    st.markdown("## 연 990,000원 (2개월 무료)")
-    if stripe_api_key and stripe is not None:
-        if st.button("결제하기 (연간)", type="primary", use_container_width=True):
-            try:
-                checkout = _create_checkout_session("annual")
-                st.link_button("Stripe Checkout으로 이동", checkout.url, use_container_width=True)
-                st.markdown(
-                    f"<script>window.location.href='{checkout.url}';</script>",
-                    unsafe_allow_html=True,
-                )
-            except Exception as e:
-                st.error(f"결제 세션 생성 실패: {e}")
+else:
+    st.subheader("요금제")
+    price_col1, price_col2 = st.columns(2)
 
-if not stripe_api_key or stripe is None:
-    st.warning("Stripe 키가 설정되지 않아 데모 결제 모드로 동작합니다.")
-    if st.button("데모 결제하기 (테스트 업그레이드)", type="primary", use_container_width=True):
-        update_user_plan(user["id"], "pro")
-        st.success("데모 결제가 완료되어 Pro 플랜으로 변경되었습니다.")
-        st.rerun()
+    with price_col1:
+        st.markdown("### 월간")
+        st.markdown("## 월 99,000원")
+        if stripe_api_key and stripe is not None:
+            if st.button("결제하기 (월간)", type="primary", use_container_width=True):
+                try:
+                    checkout = _create_checkout_session("monthly")
+                    st.link_button("Stripe Checkout으로 이동", checkout.url, use_container_width=True)
+                    st.markdown(
+                        f"<script>window.location.href=\'{checkout.url}\';</script>",
+                        unsafe_allow_html=True,
+                    )
+                except Exception as e:
+                    st.error(f"결제 세션 생성 실패: {e}")
+
+    with price_col2:
+        st.markdown("### 연간")
+        st.markdown("## 연 990,000원 (2개월 무료)")
+        if stripe_api_key and stripe is not None:
+            if st.button("결제하기 (연간)", type="primary", use_container_width=True):
+                try:
+                    checkout = _create_checkout_session("annual")
+                    st.link_button("Stripe Checkout으로 이동", checkout.url, use_container_width=True)
+                    st.markdown(
+                        f"<script>window.location.href=\'{checkout.url}\';</script>",
+                        unsafe_allow_html=True,
+                    )
+                except Exception as e:
+                    st.error(f"결제 세션 생성 실패: {e}")
+
+    if not stripe_api_key or stripe is None:
+        st.warning("Stripe 키가 설정되지 않아 데모 결제 모드로 동작합니다.")
+        if st.button("데모 결제하기 (테스트 업그레이드)", type="primary", use_container_width=True):
+            update_user_plan(user["id"], "pro")
+            st.success("데모 결제가 완료되어 Pro 플랜으로 변경되었습니다.")
+            st.rerun()
 
 st.markdown("---")
 st.subheader("추천인 리워드")
