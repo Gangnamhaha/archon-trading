@@ -148,6 +148,113 @@ input,select,textarea{font-size:16px !important}
 .stButton>button{border-radius:12px !important;font-weight:600 !important}
 .stSelectbox>div>div,.stTextInput>div>div,.stNumberInput>div>div{border-radius:10px !important;font-size:16px !important}
 }
+
+/* Glassmorphism */
+.stMetric,.stForm,[data-testid="stExpander"]>details{
+    background:rgba(26,31,46,0.6) !important;
+    backdrop-filter:blur(12px) !important;
+    -webkit-backdrop-filter:blur(12px) !important;
+    border:1px solid rgba(0,212,170,0.12) !important;
+    border-radius:16px !important;
+}
+
+/* Gradient metric cards */
+.stMetric{
+    background:linear-gradient(135deg,rgba(26,31,46,0.8),rgba(0,212,170,0.05)) !important;
+    box-shadow:0 4px 16px rgba(0,0,0,0.2) !important;
+    transition:transform 0.2s ease,box-shadow 0.2s ease !important;
+}
+.stMetric:hover{
+    transform:translateY(-2px) !important;
+    box-shadow:0 8px 24px rgba(0,212,170,0.15) !important;
+}
+.stMetric [data-testid="stMetricValue"]{
+    background:linear-gradient(135deg,#00D4AA,#00B4D8) !important;
+    -webkit-background-clip:text !important;
+    -webkit-text-fill-color:transparent !important;
+    font-weight:700 !important;
+}
+
+/* Buttons glow */
+.stButton>button[kind="primary"]{
+    background:linear-gradient(135deg,#00D4AA,#00B4D8) !important;
+    border:none !important;
+    box-shadow:0 4px 12px rgba(0,212,170,0.3) !important;
+    transition:all 0.2s ease !important;
+}
+.stButton>button[kind="primary"]:hover{
+    box-shadow:0 6px 20px rgba(0,212,170,0.5) !important;
+    transform:translateY(-1px) !important;
+}
+
+/* Tabs styling */
+.stTabs [data-baseweb="tab"][aria-selected="true"]{
+    background:linear-gradient(135deg,rgba(0,212,170,0.15),transparent) !important;
+    border-bottom:2px solid #00D4AA !important;
+    color:#00D4AA !important;
+    font-weight:600 !important;
+}
+.stTabs [data-baseweb="tab"]{
+    transition:all 0.2s ease !important;
+    border-radius:8px 8px 0 0 !important;
+}
+
+/* Sidebar active page */
+[data-testid="stSidebarNav"] a[aria-current="page"]{
+    background:linear-gradient(90deg,rgba(0,212,170,0.2),transparent) !important;
+    border-left:3px solid #00D4AA !important;
+    font-weight:700 !important;
+    color:#00D4AA !important;
+}
+
+/* Inputs glassmorphism */
+.stTextInput>div>div,.stSelectbox>div>div,.stNumberInput>div>div,.stTextArea>div>div{
+    background:rgba(26,31,46,0.5) !important;
+    backdrop-filter:blur(8px) !important;
+    border:1px solid rgba(0,212,170,0.15) !important;
+    border-radius:12px !important;
+    transition:border-color 0.2s !important;
+}
+.stTextInput>div>div:focus-within,.stSelectbox>div>div:focus-within,.stNumberInput>div>div:focus-within,.stTextArea>div>div:focus-within{
+    border-color:rgba(0,212,170,0.5) !important;
+    box-shadow:0 0 12px rgba(0,212,170,0.1) !important;
+}
+
+/* Expander glassmorphism */
+[data-testid="stExpander"]>details>summary{
+    border-radius:16px !important;
+    transition:background 0.2s !important;
+}
+[data-testid="stExpander"]>details>summary:hover{
+    background:rgba(0,212,170,0.05) !important;
+}
+
+/* Dataframe styling */
+.stDataFrame [data-testid="stDataFrameResizable"]{
+    border-radius:12px !important;
+    border:1px solid rgba(0,212,170,0.1) !important;
+    overflow:hidden !important;
+}
+
+/* Spinner custom */
+.stSpinner>div{
+    border-top-color:#00D4AA !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(0,212,170,0.3);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(0,212,170,0.5)}
+
+/* Page transition */
+.main .block-container{
+    animation:fadeInUp 0.3s ease-out !important;
+}
+@keyframes fadeInUp{
+    from{opacity:0;transform:translateY(10px)}
+    to{opacity:1;transform:translateY(0)}
+}
 </style>"""
 
 
