@@ -199,3 +199,89 @@ def recommend_stocks(
     result_df = result_df.reset_index(drop=True)
     result_df.index = result_df.index + 1
     return result_df
+
+
+def recommend_aggressive_stocks(
+    market: str = "KOSPI",
+    top_n: int = 100,
+    result_count: int = 20,
+) -> pd.DataFrame:
+    today = datetime.now().strftime("%Y%m%d")
+    tickers = krx.get_market_ticker_list(today, market=market)[:top_n]
+
+    results = []
+    for ticker in tickers:
+        try:
+            name = krx.get_market_ticker_name(ticker)
+            df = _fetch_ohlcv(ticker, days=120)
+            if df.empty or len(df) < 30:
+                continue
+
+            close = df["Close"]
+            volume = df["Volume"]
+            returns = close.pct_change().dropna()
+
+            daily_vol = float(returns.tail(20).std() * np.sqrt(252) * 100)
+            ret_20d = float((close.iloc[-1] / close.iloc[-21] - 1) * 100) if len(close) >= 21 else 0.0
+            ret_5d = float((close.iloc[-1] / close.iloc[-6] - 1) * 100) if len(close) >= 6 else 0.0
+            ret_1d = float((close.iloc[-1] / close.iloc[-2] - 1) * 100) if len(close) >= 2 else 0.0
+
+            avg_vol_20 = float(volume.rolling(20).mean().iloc[-1]) if len(volume) >= 20 else 0
+            vol_ratio = float(volume.iloc[-1] / avg_vol_20) if avg_vol_20 > 0 else 0
+
+            df_ind = _calc_all_indicators(df)
+            rsi_val = float(df_ind["RSI"].iloc[-1]) if "RSI" in df_ind.columns and not pd.isna(df_ind["RSI"].iloc[-1]) else 50.0
+
+            vol_score = np.clip(daily_vol / 10, 0, 30)
+            mom_score = np.clip(ret_20d * 2, -20, 40)
+            vol_ratio_score = np.clip((vol_ratio - 1) * 10, 0, 30)
+            rsi_score = 0.0
+            if 40 < rsi_val < 70:
+                rsi_score = 15.0
+            elif rsi_val >= 70:
+                rsi_score = -10.0
+            elif rsi_val <= 30:
+                rsi_score = 5.0
+
+            total = vol_score * 0.25 + mom_score * 0.30 + vol_ratio_score * 0.25 + rsi_score * 0.20
+            total = max(-50, min(100, total))
+
+            if total < 10:
+                continue
+
+            max_gain_20 = float(returns.tail(20).max() * 100) if len(returns) >= 20 else 0
+            max_loss_20 = float(returns.tail(20).min() * 100) if len(returns) >= 20 else 0
+
+            if total >= 40:
+                risk_label = "🔥🔥🔥 초고위험"
+            elif total >= 25:
+                risk_label = "🔥🔥 고위험"
+            else:
+                risk_label = "🔥 위험"
+
+            results.append({
+                "종목코드": ticker,
+                "종목명": name,
+                "현재가": int(close.iloc[-1]),
+                "1일(%)": round(ret_1d, 2),
+                "5일(%)": round(ret_5d, 2),
+                "20일(%)": round(ret_20d, 2),
+                "변동성(%)": round(daily_vol, 1),
+                "거래량비율": round(vol_ratio, 1),
+                "RSI": round(rsi_val, 1),
+                "20일최대상승(%)": round(max_gain_20, 2),
+                "20일최대하락(%)": round(max_loss_20, 2),
+                "공격점수": round(total, 1),
+                "위험등급": risk_label,
+            })
+        except Exception:
+            continue
+
+    if not results:
+        return pd.DataFrame()
+
+    result_df = pd.DataFrame(results)
+    result_df = result_df.sort_values("공격점수", ascending=False).head(result_count)
+    result_df = result_df.reset_index(drop=True)
+    result_df.index = result_df.index + 1
+    return result_df

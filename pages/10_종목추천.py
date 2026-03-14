@@ -12,29 +12,128 @@ require_pro()
 inject_pro_css()
 st.title("🏆 AI 종목추천")
 
-st.info(
-    "기술적 지표(RSI, MACD, 볼린저밴드, 일목균형표 등) + 모멘텀 + 거래량 + 추세일관성을 "
-    "종합 분석하여 종목을 추천합니다. **투자 참고용**이며 투자 판단의 근거로만 활용하세요."
-)
+rec_mode = st.radio("추천 모드", ["📊 일반 추천", "🔥 공격적 추천"], horizontal=True, key="rec_mode")
+
+if rec_mode == "📊 일반 추천":
+    st.info(
+        "기술적 지표(RSI, MACD, 볼린저밴드, 일목균형표 등) + 모멘텀 + 거래량 + 추세일관성을 "
+        "종합 분석하여 종목을 추천합니다. **투자 참고용**이며 투자 판단의 근거로만 활용하세요."
+    )
+else:
+    st.warning(
+        "⚠️ **고위험 공격적 추천 모드** — 높은 변동성 + 강한 모멘텀 + 거래량 폭증 종목을 필터링합니다. "
+        "이 종목들은 단기 급등 가능성이 있지만, **동일한 수준의 급락 위험**도 있습니다. "
+        "100% 수익을 보장하지 않으며, 원금 손실 가능성이 매우 높습니다."
+    )
 
 col1, col2, col3 = st.columns(3)
 with col1:
     market = st.selectbox("시장", ["KOSPI", "KOSDAQ"])
 with col2:
-    scan_count = st.selectbox("스캔 종목 수", [30, 50, 100, 200], index=1)
+    scan_count = st.selectbox("스캔 종목 수", [30, 50, 100, 200], index=2 if rec_mode == "🔥 공격적 추천" else 1)
 with col3:
     result_count = st.selectbox("추천 표시 수", [10, 20, 30], index=1)
 
 if st.button("종목 추천 시작", type="primary", use_container_width=True):
-    with st.spinner(f"{market} 시가총액 상위 {scan_count}개 종목 분석 중... (1~3분 소요)"):
-        from analysis.recommender import recommend_stocks
-        df = recommend_stocks(market=market, top_n=scan_count, result_count=result_count)
-
-    if df.empty:
-        st.error("추천 결과가 없습니다. 잠시 후 다시 시도해주세요.")
+    if rec_mode == "🔥 공격적 추천":
+        with st.spinner(f"{market} 상위 {scan_count}개 종목 공격적 분석 중... (1~3분 소요)"):
+            from analysis.recommender import recommend_aggressive_stocks
+            df = recommend_aggressive_stocks(market=market, top_n=scan_count, result_count=result_count)
+        if df.empty:
+            st.error("조건에 맞는 공격적 종목이 없습니다.")
+        else:
+            st.session_state["aggressive_result"] = df
+            st.session_state["recommend_market"] = market
+            st.session_state.pop("recommend_result", None)
     else:
-        st.session_state["recommend_result"] = df
-        st.session_state["recommend_market"] = market
+        with st.spinner(f"{market} 시가총액 상위 {scan_count}개 종목 분석 중... (1~3분 소요)"):
+            from analysis.recommender import recommend_stocks
+            df = recommend_stocks(market=market, top_n=scan_count, result_count=result_count)
+        if df.empty:
+            st.error("추천 결과가 없습니다. 잠시 후 다시 시도해주세요.")
+        else:
+            st.session_state["recommend_result"] = df
+            st.session_state["recommend_market"] = market
+            st.session_state.pop("aggressive_result", None)
+
+if "aggressive_result" in st.session_state:
+    adf = st.session_state["aggressive_result"]
+    market_label = st.session_state.get("recommend_market", "")
+
+    st.subheader(f"🔥 {market_label} 공격적 추천 결과")
+
+    risk_counts = adf["위험등급"].value_counts()
+    r1, r2, r3 = st.columns(3)
+    r1.metric("🔥🔥🔥 초고위험", f"{risk_counts.get('🔥🔥🔥 초고위험', 0)}종목")
+    r2.metric("🔥🔥 고위험", f"{risk_counts.get('🔥🔥 고위험', 0)}종목")
+    r3.metric("🔥 위험", f"{risk_counts.get('🔥 위험', 0)}종목")
+
+    st.markdown("---")
+
+    agg_display = adf[["종목명", "현재가", "1일(%)", "5일(%)", "20일(%)",
+                        "변동성(%)", "거래량비율", "RSI",
+                        "20일최대상승(%)", "20일최대하락(%)", "공격점수", "위험등급"]].copy()
+
+    def color_risk(val):
+        if "초고위험" in str(val):
+            return "background-color: #FF2020; color: white; font-weight: bold"
+        elif "고위험" in str(val):
+            return "background-color: #D45050; color: white"
+        return "background-color: #8B4513; color: white"
+
+    def color_return(val):
+        try:
+            v = float(val)
+            return "color: #FF4444" if v > 0 else ("color: #4488FF" if v < 0 else "")
+        except (ValueError, TypeError):
+            return ""
+
+    styled_agg = agg_display.style.applymap(
+        color_risk, subset=["위험등급"]
+    ).applymap(
+        color_return, subset=["1일(%)", "5일(%)", "20일(%)", "20일최대상승(%)", "20일최대하락(%)"]
+    ).format({
+        "현재가": "{:,}",
+        "1일(%)": "{:+.2f}", "5일(%)": "{:+.2f}", "20일(%)": "{:+.2f}",
+        "변동성(%)": "{:.1f}", "거래량비율": "{:.1f}x", "RSI": "{:.1f}",
+        "20일최대상승(%)": "{:+.2f}", "20일최대하락(%)": "{:+.2f}",
+        "공격점수": "{:+.1f}",
+    })
+
+    st.dataframe(styled_agg, use_container_width=True, height=600)
+
+    st.markdown("---")
+    st.subheader("📊 공격점수 시각화")
+
+    import plotly.graph_objects as go
+    top_agg = adf.head(10)
+    colors_agg = ["#FF2020" if v >= 40 else ("#FF6644" if v >= 25 else "#FF9944") for v in top_agg["공격점수"]]
+    fig_agg = go.Figure()
+    fig_agg.add_trace(go.Bar(
+        x=top_agg["종목명"], y=top_agg["공격점수"],
+        marker_color=colors_agg,
+        text=[f"{v:+.1f}" for v in top_agg["공격점수"]],
+        textposition="outside",
+    ))
+    fig_agg.update_layout(
+        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        title="Top 10 공격점수", yaxis_title="점수", height=400, margin=dict(t=40, b=40),
+    )
+    st.plotly_chart(fig_agg, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("💡 공격적 추천 점수 산출 기준")
+    st.markdown("""
+    | 팩터 | 비중 | 설명 |
+    |---|---|---|
+    | **변동성** | 25% | 연환산 변동성이 높을수록 고점수 (일반 추천과 반대) |
+    | **모멘텀** | 30% | 20일 수익률이 클수록 고점수 |
+    | **거래량 폭증** | 25% | 20일 평균 대비 거래량 비율이 높을수록 고점수 |
+    | **RSI 적정구간** | 20% | RSI 40~70 구간이 최적 (과매수 아닌 상승 여력) |
+
+    > ⚠️ **경고**: 이 종목들은 단기 급등 가능성이 있지만, 동일한 수준의 급락 위험이 있습니다.
+    > 반드시 손절 라인을 설정하고, 전체 자산의 일부만 투입하세요.
+    """)
 
 if "recommend_result" in st.session_state:
     df = st.session_state["recommend_result"]
