@@ -25,12 +25,18 @@ st.set_page_config(page_title="💳 Pro 플랜 결제", page_icon="💳", layout
 user = require_auth()
 inject_pro_css()
 
-stripe_api_key = st.secrets.get("STRIPE_SECRET_KEY", "")
-if stripe is not None:
+try:
+    stripe_api_key = st.secrets.get("STRIPE_SECRET_KEY", "")
+except Exception:
+    stripe_api_key = ""
+if stripe is not None and stripe_api_key:
     setattr(stripe, "api_key", stripe_api_key)
 
 
-ALLOW_DEMO_PAYMENTS = str(st.secrets.get("ALLOW_DEMO_PAYMENTS", "false")).lower() in {"1", "true", "yes", "on"}
+try:
+    ALLOW_DEMO_PAYMENTS = str(st.secrets.get("ALLOW_DEMO_PAYMENTS", "false")).lower() in {"1", "true", "yes", "on"}
+except Exception:
+    ALLOW_DEMO_PAYMENTS = False
 PLAN_CONFIG = {
     "monthly": {"amount": 99000, "currency": "krw"},
     "annual": {"amount": 990000, "currency": "krw"},
@@ -124,7 +130,10 @@ def _create_checkout_session(plan_type: str):
     if stripe is None:
         raise RuntimeError("stripe 패키지가 설치되어 있지 않습니다.")
 
-    base_url = st.secrets.get("APP_BASE_URL", "http://localhost:8501")
+    try:
+        base_url = st.secrets.get("APP_BASE_URL", "http://localhost:8501")
+    except Exception:
+        base_url = "http://localhost:8501"
 
     if plan_type == "annual":
         amount = 990000
@@ -230,7 +239,10 @@ def _show_pricing():
 if pay_method == "토스페이먼츠 (카드/계좌이체/카카오페이)":
     st.subheader("요금제")
     _show_pricing()
-    toss_client_key = st.secrets.get("TOSS_CLIENT_KEY", "")
+    try:
+        toss_client_key = st.secrets.get("TOSS_CLIENT_KEY", "")
+    except Exception:
+        toss_client_key = ""
     if toss_client_key:
         import streamlit.components.v1 as components
         _toss_html = f"""
@@ -264,7 +276,10 @@ if pay_method == "토스페이먼츠 (카드/계좌이체/카카오페이)":
 elif pay_method == "아임포트 Portone (통합 PG)":
     st.subheader("요금제")
     _show_pricing()
-    portone_code = st.secrets.get("PORTONE_IMP_CODE", "")
+    try:
+        portone_code = st.secrets.get("PORTONE_IMP_CODE", "")
+    except Exception:
+        portone_code = ""
     if portone_code:
         import streamlit.components.v1 as components
         _portone_html = f"""
@@ -305,12 +320,19 @@ elif pay_method == "아임포트 Portone (통합 PG)":
 elif pay_method == "카카오페이 (간편결제)":
     st.subheader("요금제")
     _show_pricing()
-    kakao_admin_key = st.secrets.get("KAKAO_ADMIN_KEY", "")
+    try:
+        kakao_admin_key = st.secrets.get("KAKAO_ADMIN_KEY", "")
+    except Exception:
+        kakao_admin_key = ""
     if kakao_admin_key:
         import requests as _req
         if st.button("카카오페이로 결제", type="primary", use_container_width=True, key="kakao_pay"):
             try:
                 _headers = {"Authorization": f"KakaoAK {kakao_admin_key}", "Content-Type": "application/x-www-form-urlencoded"}
+                try:
+                    _app_base_url = st.secrets.get("APP_BASE_URL", "http://localhost:8501")
+                except Exception:
+                    _app_base_url = "http://localhost:8501"
                 _data = {
                     "cid": "TC0ONETIME",
                     "partner_order_id": f"archon-{user['username']}",
@@ -319,9 +341,9 @@ elif pay_method == "카카오페이 (간편결제)":
                     "quantity": 1,
                     "total_amount": 99000,
                     "tax_free_amount": 0,
-                    "approval_url": st.secrets.get("APP_BASE_URL", "http://localhost:8501") + "?payment=success",
-                    "cancel_url": st.secrets.get("APP_BASE_URL", "http://localhost:8501") + "?payment=cancel",
-                    "fail_url": st.secrets.get("APP_BASE_URL", "http://localhost:8501") + "?payment=fail",
+                    "approval_url": _app_base_url + "?payment=success",
+                    "cancel_url": _app_base_url + "?payment=cancel",
+                    "fail_url": _app_base_url + "?payment=fail",
                 }
                 _resp = _req.post(
                     "https://kapi.kakao.com/v1/payment/ready",
