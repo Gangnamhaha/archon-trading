@@ -497,10 +497,6 @@ def _show_login_form():
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        session_label = str(
-            st.selectbox("세션 유지 시간", list(_SESSION_TIMEOUT_OPTIONS.keys()), index=2, key="session_timeout_sel")
-            or "24시간"
-        )
         with st.expander("📜 이용약관 보기"):
             st.markdown(
                 """
@@ -520,26 +516,64 @@ def _show_login_form():
                 """
             )
         agree = st.checkbox("이용약관 및 개인정보처리방침에 동의합니다", key="login_agree")
-        with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
 
-            if submitted:
-                if not agree:
-                    st.warning("약관에 동의해야 로그인할 수 있습니다.")
-                elif not username or not password:
-                    st.error("모든 필드를 입력하세요.")
-                else:
-                    user = verify_user(username, password)
-                    if user:
-                        st.session_state["authenticated"] = True
-                        st.session_state["user"] = user
-                        st.session_state["_login_time"] = datetime.now()
-                        st.session_state["_session_timeout"] = _SESSION_TIMEOUT_OPTIONS[session_label]
-                        st.rerun()
+        login_tab, signup_tab = st.tabs(["🔐 로그인", "📝 회원가입"])
+
+        with login_tab:
+            session_label = str(
+                st.selectbox("세션 유지 시간", list(_SESSION_TIMEOUT_OPTIONS.keys()), index=2, key="session_timeout_sel")
+                or "24시간"
+            )
+            with st.form("login_form"):
+                username = st.text_input("아이디", placeholder="아이디를 입력하세요")
+                password = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요")
+                submitted = st.form_submit_button("로그인", type="primary", use_container_width=True)
+
+                if submitted:
+                    if not agree:
+                        st.warning("약관에 동의해야 로그인할 수 있습니다.")
+                    elif not username or not password:
+                        st.error("아이디와 비밀번호를 입력하세요.")
                     else:
-                        st.error("아이디 또는 비밀번호가 틀렸습니다.")
+                        user = verify_user(username, password)
+                        if user:
+                            st.session_state["authenticated"] = True
+                            st.session_state["user"] = user
+                            st.session_state["_login_time"] = datetime.now()
+                            st.session_state["_session_timeout"] = _SESSION_TIMEOUT_OPTIONS[session_label]
+                            st.rerun()
+                        else:
+                            st.error("아이디 또는 비밀번호가 틀렸습니다.")
+
+        with signup_tab:
+            with st.form("signup_form"):
+                new_username = st.text_input("아이디", placeholder="4~20자, 영문/숫자/이메일 형식")
+                new_password = st.text_input("비밀번호", type="password", placeholder="8자 이상, 영문+숫자 조합")
+                new_password_confirm = st.text_input("비밀번호 확인", type="password", placeholder="비밀번호를 다시 입력하세요")
+                signup_submitted = st.form_submit_button("회원가입", type="primary", use_container_width=True)
+
+                if signup_submitted:
+                    if not agree:
+                        st.warning("약관에 동의해야 회원가입할 수 있습니다.")
+                    elif not new_username or not new_password or not new_password_confirm:
+                        st.error("모든 항목을 입력하세요.")
+                    elif len(new_username) < 4 or len(new_username) > 50:
+                        st.error("아이디는 4자 이상 50자 이하로 입력하세요.")
+                    elif len(new_password) < 8:
+                        st.error("비밀번호는 8자 이상이어야 합니다.")
+                    elif not any(c.isdigit() for c in new_password) or not any(c.isalpha() for c in new_password):
+                        st.error("비밀번호는 영문과 숫자를 모두 포함해야 합니다.")
+                    elif new_password != new_password_confirm:
+                        st.error("비밀번호가 일치하지 않습니다.")
+                    elif new_username.lower() == "admin":
+                        st.error("사용할 수 없는 아이디입니다.")
+                    else:
+                        success = create_user(new_username, new_password, role="user", plan="free")
+                        if success:
+                            st.success(f"🎉 회원가입 완료! '{new_username}'으로 로그인하세요.")
+                            st.balloons()
+                        else:
+                            st.error("이미 사용 중인 아이디입니다. 다른 아이디를 사용하세요.")
 
 
 _SESSION_TIMEOUT_OPTIONS = {
