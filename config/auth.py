@@ -497,32 +497,32 @@ def _show_login_form():
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        session_label = str(
+            st.selectbox("세션 유지 시간", list(_SESSION_TIMEOUT_OPTIONS.keys()), index=2, key="session_timeout_sel")
+            or "24시간"
+        )
+        with st.expander("📜 이용약관 보기"):
+            st.markdown(
+                """
+                - 본 서비스는 투자 참고 정보를 제공하며, 투자 판단 및 결과 책임은 이용자 본인에게 있습니다.
+                - AI 추천/분석/자동매매 기능은 수익을 보장하지 않으며 원금 손실이 발생할 수 있습니다.
+                - Pro 결제는 관련 법령에 따라 청약철회가 가능하나, 사용분은 차감될 수 있습니다.
+                - 서비스 내용은 사전 고지 후 변경/중단될 수 있습니다.
+                """
+            )
+        with st.expander("🔐 개인정보처리방침 보기"):
+            st.markdown(
+                """
+                - 수집 항목: 사용자명, 비밀번호(해시), API 키(암호화 저장), 대화/거래/포트폴리오 내역, 접속 로그
+                - 수집 목적: 서비스 제공, 자동매매 실행, 설정 복원, 운영 안정화
+                - 보관 기간: 회원 탈퇴 시까지(법령상 보관 의무 제외)
+                - AI 채팅 사용 시 선택한 AI 제공사로 대화가 전송될 수 있습니다.
+                """
+            )
+        agree = st.checkbox("이용약관 및 개인정보처리방침에 동의합니다", key="login_agree")
         with st.form("login_form"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
-            session_label = str(
-                st.selectbox("세션 유지 시간", list(_SESSION_TIMEOUT_OPTIONS.keys()), index=2, key="session_timeout_sel")
-                or "24시간"
-            )
-            agree = st.checkbox("이용약관 및 개인정보처리방침에 동의합니다", key="login_agree")
-            with st.expander("📜 이용약관 보기"):
-                st.markdown(
-                    """
-                    - 본 서비스는 투자 참고 정보를 제공하며, 투자 판단 및 결과 책임은 이용자 본인에게 있습니다.
-                    - AI 추천/분석/자동매매 기능은 수익을 보장하지 않으며 원금 손실이 발생할 수 있습니다.
-                    - Pro 결제는 관련 법령에 따라 청약철회가 가능하나, 사용분은 차감될 수 있습니다.
-                    - 서비스 내용은 사전 고지 후 변경/중단될 수 있습니다.
-                    """
-                )
-            with st.expander("🔐 개인정보처리방침 보기"):
-                st.markdown(
-                    """
-                    - 수집 항목: 사용자명, 비밀번호(해시), API 키(암호화 저장), 대화/거래/포트폴리오 내역, 접속 로그
-                    - 수집 목적: 서비스 제공, 자동매매 실행, 설정 복원, 운영 안정화
-                    - 보관 기간: 회원 탈퇴 시까지(법령상 보관 의무 제외)
-                    - AI 채팅 사용 시 선택한 AI 제공사로 대화가 전송될 수 있습니다.
-                    """
-                )
             submitted = st.form_submit_button("Login", type="primary", use_container_width=True)
 
             if submitted:
