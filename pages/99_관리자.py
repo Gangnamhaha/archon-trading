@@ -1,6 +1,8 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from datetime import timedelta
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -41,8 +43,8 @@ with tab1:
         with st.form("add_user_form"):
             new_username = st.text_input("Username", key="new_user")
             new_password = st.text_input("Password", type="password", key="new_pass")
-            new_role = st.selectbox("Role", ["user", "admin"], key="new_role")
-            new_plan = st.selectbox("Plan", ["free", "pro"], key="new_plan")
+            new_role = str(st.selectbox("Role", ["user", "admin"], key="new_role") or "user")
+            new_plan = str(st.selectbox("Plan", ["free", "plus", "pro"], key="new_plan") or "free")
             if st.form_submit_button("Add", type="primary", use_container_width=True):
                 if new_username and new_password:
                     if create_user(new_username, new_password, new_role, new_plan):
@@ -58,8 +60,8 @@ with tab1:
         if not users_df.empty:
             deletable = users_df[users_df["username"] != "admin"]
             if not deletable.empty:
-                del_options = {f"{r['username']} (ID: {r['id']})": r["id"] for _, r in deletable.iterrows()}
-                del_selection = st.selectbox("Select user", list(del_options.keys()), key="del_user")
+                del_options = {f"{r['username']} (ID: {r['id']})": int(r["id"]) for _, r in deletable.iterrows()}
+                del_selection = str(st.selectbox("Select user", list(del_options.keys()), key="del_user") or "")
                 if st.button("Delete", type="primary", use_container_width=True):
                     if delete_user(del_options[del_selection]):
                         st.success("Deleted.")
@@ -70,8 +72,8 @@ with tab1:
         st.markdown("---")
         st.markdown("**Reset Password**")
         if not users_df.empty:
-            reset_options = {f"{r['username']} (ID: {r['id']})": r["id"] for _, r in users_df.iterrows()}
-            reset_selection = st.selectbox("Select user", list(reset_options.keys()), key="reset_user")
+            reset_options = {f"{r['username']} (ID: {r['id']})": int(r["id"]) for _, r in users_df.iterrows()}
+            reset_selection = str(st.selectbox("Select user", list(reset_options.keys()), key="reset_user") or "")
             reset_pw = st.text_input("New password", type="password", key="reset_pw")
             if st.button("Reset Password", use_container_width=True):
                 if reset_pw:
@@ -85,10 +87,10 @@ with tab1:
     if not users_df.empty:
         plan_col1, plan_col2 = st.columns(2)
         with plan_col1:
-            plan_options = {f"{r['username']} (ID: {r['id']}) — {r['plan']}": r["id"] for _, r in users_df.iterrows()}
-            plan_selection = st.selectbox("Select user", list(plan_options.keys()), key="plan_user")
+            plan_options = {f"{r['username']} (ID: {r['id']}) — {r['plan']}": int(r["id"]) for _, r in users_df.iterrows()}
+            plan_selection = str(st.selectbox("Select user", list(plan_options.keys()), key="plan_user") or "")
         with plan_col2:
-            new_plan_val = st.selectbox("New Plan", ["free", "pro"], key="plan_val")
+            new_plan_val = str(st.selectbox("New Plan", ["free", "plus", "pro"], key="plan_val") or "free")
         if st.button("Change Plan", type="primary", use_container_width=True):
             update_user_plan(plan_options[plan_selection], new_plan_val)
             st.success(f"Plan updated to '{new_plan_val}'.")
@@ -109,7 +111,7 @@ with tab2:
         sells = trades_df[trades_df["action"] == "SELL"] if "action" in trades_df.columns else pd.DataFrame()
         col2.metric("Buys", len(buys))
         col3.metric("Sells", len(sells))
-        strategies = trades_df["strategy"].nunique() if "strategy" in trades_df.columns else 0
+        strategies = int(trades_df["strategy"].nunique()) if "strategy" in trades_df.columns else 0
         col4.metric("Strategies Used", strategies)
 
         st.dataframe(trades_df, use_container_width=True, hide_index=True)
@@ -180,6 +182,7 @@ with tab5:
     st.subheader("사용자 분석 대시보드")
 
     total_users = len(users_df)
+    plus_users = len(users_df[users_df["plan"] == "plus"]) if "plan" in users_df.columns else 0
     pro_users = len(users_df[users_df["plan"] == "pro"]) if "plan" in users_df.columns else 0
     free_users = len(users_df[users_df["plan"] == "free"]) if "plan" in users_df.columns else 0
 
@@ -188,11 +191,12 @@ with tab5:
         created_series = pd.to_datetime(users_df["created_at"], errors="coerce")
         today_signups = int((created_series.dt.date == pd.Timestamp.now().date()).sum())
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Total users", total_users)
-    m2.metric("Pro users", pro_users)
-    m3.metric("Free users", free_users)
-    m4.metric("오늘 가입 수", today_signups)
+    m2.metric("Free users", free_users)
+    m3.metric("Plus users", plus_users)
+    m4.metric("Pro users", pro_users)
+    m5.metric("오늘 가입 수", today_signups)
 
     st.markdown("---")
     st.subheader("활동 로그")
@@ -227,13 +231,15 @@ with tab5:
         if dau_df.empty:
             st.info("활성 사용자 데이터가 없습니다.")
         else:
-            start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=29)
+            start_date = pd.Timestamp.now().to_pydatetime() - timedelta(days=29)
             dau_df = dau_df[dau_df["created_at"] >= start_date]
             if dau_df.empty:
                 st.info("최근 30일 활성 사용자 데이터가 없습니다.")
             else:
-                dau_df["date"] = dau_df["created_at"].dt.date
-                daily_active = dau_df.groupby("date")["username"].nunique().reset_index(name="active_users")
+                dau_dates = pd.Series(pd.to_datetime(dau_df["created_at"], errors="coerce"), index=dau_df.index)
+                dau_df["date"] = dau_dates.dt.date
+                daily_active = dau_df.groupby("date")["username"].nunique().reset_index()
+                daily_active.columns = ["date", "active_users"]
                 fig_dau = px.line(
                     daily_active,
                     x="date",
@@ -250,15 +256,20 @@ with tab5:
     if users_df.empty or "plan" not in users_df.columns:
         st.info("플랜 분포 데이터가 없습니다.")
     else:
-        plan_dist = users_df["plan"].value_counts().reset_index()
+        plan_dist = (
+            users_df["plan"]
+            .value_counts()
+            .reindex(["free", "plus", "pro"], fill_value=0)
+            .reset_index()
+        )
         plan_dist.columns = ["plan", "count"]
         fig_plan = px.pie(
             plan_dist,
             values="count",
             names="plan",
-            title="Free vs Pro",
+            title="Free vs Plus vs Pro",
             color="plan",
-            color_discrete_map={"free": "#A0AEC0", "pro": "#00D4AA"}
+            color_discrete_map={"free": "#A0AEC0", "plus": "#38BDF8", "pro": "#00D4AA"}
         )
         fig_plan.update_layout(plot_bgcolor="#0E1117", paper_bgcolor="#0E1117", font_color="#E2E8F0")
         st.plotly_chart(fig_plan, use_container_width=True)

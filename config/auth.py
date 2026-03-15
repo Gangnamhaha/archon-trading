@@ -8,6 +8,7 @@ import streamlit as st
 import pandas as pd
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "portfolio.db")
+VALID_PLANS = {"free", "plus", "pro"}
 
 
 def _get_conn():
@@ -135,6 +136,9 @@ def get_all_users() -> pd.DataFrame:
 
 
 def update_user_plan(user_id: int, plan: str):
+    if plan not in VALID_PLANS:
+        raise ValueError(f"Unsupported plan: {plan}")
+
     conn = _get_conn()
     conn.execute("UPDATE users SET plan=? WHERE id=?", (plan, user_id))
     if plan == "free":
@@ -190,10 +194,29 @@ def is_admin() -> bool:
     return st.session_state.get("user", {}).get("role") == "admin"
 
 
-def is_pro(user: Optional[dict[str, object]] = None) -> bool:
+def _resolve_user(user: Optional[dict[str, object]] = None) -> dict[str, object]:
     if user is None:
         user = st.session_state.get("user", {})
-    current_user = user or {}
+    return user or {}
+
+
+def is_paid(user: Optional[dict[str, object]] = None) -> bool:
+    current_user = _resolve_user(user)
+    if current_user.get("role") == "admin":
+        return True
+    return current_user.get("plan") in {"plus", "pro"}
+
+
+def is_plus(user: Optional[dict[str, object]] = None) -> bool:
+    current_user = _resolve_user(user)
+    if current_user.get("role") == "admin":
+        return False
+    return current_user.get("plan") == "plus"
+
+
+def is_pro(user: Optional[dict[str, object]] = None) -> bool:
+    """Return True for Pro-only access; shared paid access should use is_paid()."""
+    current_user = _resolve_user(user)
     if current_user.get("role") == "admin":
         return True
 
@@ -289,6 +312,10 @@ def _show_login_form():
             border: 1px solid rgba(0, 212, 170, 0.5);
             box-shadow: 0 0 0 1px rgba(0, 212, 170, 0.2) inset;
         }
+        .archon-price-card.plus {
+            border: 1px solid rgba(56, 189, 248, 0.45);
+            box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.16) inset;
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -348,7 +375,7 @@ def _show_login_form():
         </div>
         """, unsafe_allow_html=True)
 
-    price1, price2 = st.columns(2)
+    price1, price2, price3 = st.columns(3)
     with price1:
         st.markdown("""
         <div class="archon-price-card">
@@ -363,13 +390,27 @@ def _show_login_form():
         """, unsafe_allow_html=True)
     with price2:
         st.markdown("""
+        <div class="archon-price-card plus">
+            <h4 style="margin:0 0 0.5rem 0;color:#38BDF8;">Plus 월 49,000원</h4>
+            <div style="color:#A0AEC0;line-height:1.8;">
+                분봉/주봉/월봉<br>
+                지표 무제한<br>
+                포트폴리오 무제한<br>
+                뉴스감성분석<br>
+                백테스팅
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    with price3:
+        st.markdown("""
         <div class="archon-price-card pro">
             <h4 style="margin:0 0 0.5rem 0;color:#00D4AA;">Pro 월 99,000원</h4>
             <div style="color:#A0AEC0;line-height:1.8;">
-                모든 기능 무제한<br>
+                Plus 전체 포함<br>
                 오토파일럿<br>
                 AI예측<br>
-                종목추천
+                종목추천<br>
+                마케팅도구 / US 자동매매
             </div>
         </div>
         """, unsafe_allow_html=True)

@@ -3,7 +3,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import streamlit as st
-from config.auth import require_auth, logout, is_pro
+from config.auth import require_auth, logout, is_paid, is_pro
 from config.styles import inject_pro_css
 from data.database import get_watchlist, add_watchlist, remove_watchlist
 
@@ -17,6 +17,8 @@ st.set_page_config(
 user = require_auth()
 inject_pro_css(show_logout=False)
 _user_is_pro = is_pro(user)
+_user_is_paid = is_paid(user)
+_user_plan = "pro" if _user_is_pro else ("plus" if str(user.get("plan", "free")) == "plus" else "free")
 
 if "theme" not in st.session_state:
     st.session_state["theme"] = "dark"
@@ -225,6 +227,39 @@ CUSTOM_CSS = f"""<style>
 .feature-item h4 {{ color: {accent}; margin: 0 0 0.5rem 0; font-size: 0.95rem; }}
 .feature-item p  {{ color: {sub_text}; font-size: 0.82rem; margin: 0; line-height: 1.4; }}
 
+.pricing-grid {{
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin: 0.8rem 0 1.5rem;
+}}
+.pricing-card {{
+    background: {glass_bg};
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid {glass_border};
+    border-radius: 16px;
+    padding: 1.2rem;
+    position: relative;
+    overflow: hidden;
+}}
+.pricing-card.plus {{ border-color: rgba(56,189,248,0.38); box-shadow: 0 0 0 1px rgba(56,189,248,0.12) inset; }}
+.pricing-card.pro {{ border-color: rgba(0,212,170,0.42); box-shadow: 0 0 0 1px rgba(0,212,170,0.16) inset; }}
+.pricing-tier {{ color: {text}; font-size: 1.1rem; font-weight: 700; margin: 0; }}
+.pricing-price {{ color: {accent}; font-size: 1.55rem; font-weight: 800; margin: 0.45rem 0 0.8rem; }}
+.pricing-card.plus .pricing-price {{ color: #38BDF8; }}
+.pricing-list {{ color: {sub_text}; font-size: 0.82rem; line-height: 1.8; }}
+.pricing-chip {{
+    display: inline-block;
+    margin-bottom: 0.8rem;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+}}
+.pricing-chip.plus {{ background: rgba(56,189,248,0.12); color: #38BDF8; }}
+.pricing-chip.pro {{ background: rgba(0,212,170,0.12); color: {accent}; }}
+
 /* ---- Sector Heatmap ---- */
 .heatmap-grid {{
     display: grid;
@@ -342,6 +377,7 @@ CUSTOM_CSS = f"""<style>
     .hero-stats {{ flex-wrap: wrap; gap: 0.5rem; }}
     .hero-pill {{ font-size: 0.7rem; padding: 0.25rem 0.7rem; }}
     .feature-grid {{ grid-template-columns: 1fr !important; }}
+    .pricing-grid {{ grid-template-columns: 1fr !important; }}
     .heatmap-grid {{ grid-template-columns: repeat(3, 1fr) !important; }}
     .ticker-item {{ font-size: 0.7rem; padding: 0 1rem; }}
     .ps-grid {{ grid-template-columns: repeat(2, 1fr) !important; }}
@@ -349,6 +385,7 @@ CUSTOM_CSS = f"""<style>
 }}
 @media(max-width:1024px) and (min-width:769px){{
     .feature-grid {{ grid-template-columns: repeat(2, 1fr) !important; }}
+    .pricing-grid {{ grid-template-columns: repeat(2, 1fr) !important; }}
 }}
 @media(max-width:480px){{
     .hero-title {{ font-size: 1.4rem !important; }}
@@ -615,7 +652,7 @@ st.markdown(f"""
     <h1 class="hero-title">ARCHON</h1>
     <p class="hero-sub">
         AI-Powered Trading Terminal
-        <span class="pro-badge">PRO</span>
+        <span class="pro-badge">{_user_plan.upper()}</span>
     </p>
     <div class="hero-stats">
         <div class="hero-pill"><span>12</span> Modules</div>
@@ -642,7 +679,12 @@ else:
 
 _wl_cnt = len(get_watchlist(user["username"])) if not get_watchlist(user["username"]).empty else 0
 _ps_cards += f'<div class="ps-card"><p class="ps-label">워치리스트</p><p class="ps-val">{_wl_cnt}</p></div>'
-_plan_label = '<span style="color:#00D4AA">💎 Pro</span>' if _user_is_pro else '<span style="color:#A0AEC0">🆓 Free</span>'
+if _user_plan == "pro":
+    _plan_label = '<span style="color:#00D4AA">💎 Pro</span>'
+elif _user_plan == "plus":
+    _plan_label = '<span style="color:#38BDF8">✨ Plus</span>'
+else:
+    _plan_label = '<span style="color:#A0AEC0">🆓 Free</span>'
 _ps_cards += f'<div class="ps-card"><p class="ps-label">플랜</p><p class="ps-val">{_plan_label}</p></div>'
 
 st.markdown(f"""
@@ -732,6 +774,13 @@ if _user_is_pro:
         ("pages/10_자동매매.py", "⚡", "자동매매", False),
         ("pages/5_종목추천.py", "🏆", "종목추천", False),
         ("pages/6_AI예측.py", "🤖", "AI예측", False),
+        ("pages/13_마케팅도구.py", "📣", "마케팅도구", False),
+    ]
+elif _user_is_paid:
+    qa_items = [
+        ("pages/1_데이터분석.py", "📊", "고급 데이터분석", False),
+        ("pages/7_백테스팅.py", "🧪", "백테스팅", False),
+        ("pages/12_뉴스감성분석.py", "📰", "뉴스감성분석", False),
         ("pages/9_포트폴리오.py", "📁", "포트폴리오", False),
     ]
 else:
@@ -739,7 +788,7 @@ else:
         ("pages/1_데이터분석.py", "📊", "데이터분석", False),
         ("pages/18_자주하는질문.py", "❓", "자주하는질문", False),
         ("pages/17_고객문의.py", "📩", "고객문의", False),
-        ("pages/14_결제.py", "💳", "Pro 업그레이드", False),
+        ("pages/14_결제.py", "💳", "플랜 업그레이드", False),
     ]
 for col, (page, icon, label, pro_only) in zip(qa_cols, qa_items):
     lock_cls = ' qa-lock' if pro_only and not _user_is_pro else ''
@@ -847,6 +896,50 @@ with st.expander("🧩 기능 전체 보기", expanded=False):
 </div>
 """, unsafe_allow_html=True)
 
+st.markdown('<div class="section-hdr">플랜 안내</div>', unsafe_allow_html=True)
+st.markdown(
+    """
+    <div class="pricing-grid">
+        <div class="pricing-card">
+            <p class="pricing-tier">Free</p>
+            <div class="pricing-price">무료</div>
+            <div class="pricing-list">
+                기본 기능<br>
+                일봉 데이터<br>
+                지표 5개<br>
+                포트폴리오 5종목
+            </div>
+        </div>
+        <div class="pricing-card plus">
+            <span class="pricing-chip plus">Balance</span>
+            <p class="pricing-tier">Plus</p>
+            <div class="pricing-price">₩49,000/월</div>
+            <div class="pricing-list">
+                분봉·주봉·월봉<br>
+                지표 무제한<br>
+                포트폴리오 무제한<br>
+                뉴스감성분석<br>
+                백테스팅
+            </div>
+        </div>
+        <div class="pricing-card pro">
+            <span class="pricing-chip pro">Autopilot</span>
+            <p class="pricing-tier">Pro</p>
+            <div class="pricing-price">₩99,000/월</div>
+            <div class="pricing-list">
+                Plus 전체 포함<br>
+                오토파일럿<br>
+                AI예측<br>
+                종목추천<br>
+                마케팅도구 / US 자동매매
+            </div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+st.page_link("pages/14_결제.py", label="💳 결제 페이지에서 플랜 자세히 보기", use_container_width=True)
+
 # ---------------------------------------------------------------------------
 # 6. Sector Heatmap
 # ---------------------------------------------------------------------------
@@ -897,7 +990,12 @@ st.markdown(
 # ---------------------------------------------------------------------------
 # Sidebar (unchanged)
 # ---------------------------------------------------------------------------
-_plan_badge = "💎 Pro" if _user_is_pro else "🆓 Free"
+if _user_plan == "pro":
+    _plan_badge = "💎 Pro"
+elif _user_plan == "plus":
+    _plan_badge = "✨ Plus"
+else:
+    _plan_badge = "🆓 Free"
 st.sidebar.markdown(f"**{user['username']}** ({user['role']}) — {_plan_badge}")
 
 theme_label = "☀️ Light" if is_dark else "🌙 Dark"
@@ -912,9 +1010,9 @@ st.sidebar.markdown("### ⭐ 워치리스트")
 _MAX_FREE_WATCHLIST = 3
 wl = get_watchlist(user["username"])
 _wl_count = len(wl) if not wl.empty else 0
-_wl_can_add = _user_is_pro or _wl_count < _MAX_FREE_WATCHLIST
+_wl_can_add = _user_is_paid or _wl_count < _MAX_FREE_WATCHLIST
 
-if not _user_is_pro:
+if not _user_is_paid:
     st.sidebar.caption(f"🔒 Free: {_wl_count}/{_MAX_FREE_WATCHLIST}종목")
 
 with st.sidebar.expander("종목 추가", expanded=False):
