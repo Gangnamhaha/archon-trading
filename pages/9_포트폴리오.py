@@ -335,3 +335,105 @@ else:
         elif not _user_is_pro:
             st.markdown("---")
             st.info("💎 분산투자 최적화는 Pro 전용 기능입니다.")
+
+st.markdown("---")
+st.subheader("💱 FX · 🪙 코인 자산 현황")
+
+_fx_tab, _crypto_tab, _alert_tab = st.tabs(["💱 외환 포지션", "🪙 코인 포지션", "🔔 가격 알림"])
+
+with _fx_tab:
+    _fx_log = st.session_state.get("fx_trade_log", [])
+    _fx_pos = st.session_state.get("fx_position")
+    if _fx_pos:
+        from data.fetcher import get_fx_spot_rate
+        _fx_pair = str(_fx_pos.get("pair", st.session_state.get("fx_pair", "")))
+        _fx_entry = float(_fx_pos.get("entry_rate", 0))
+        _fx_curr = get_fx_spot_rate(_fx_pair) if _fx_pair else 0.0
+        _fx_pct = (_fx_curr / _fx_entry - 1) * 100 if _fx_entry else 0.0
+        _direction = str(_fx_pos.get("direction", ""))
+        _lot = int(_fx_pos.get("lot", 0))
+        pc1, pc2, pc3, pc4 = st.columns(4)
+        pc1.metric("보유 통화쌍", _fx_pair)
+        pc2.metric("진입 환율", f"{_fx_entry:.4f}")
+        pc3.metric("현재 환율", f"{_fx_curr:.4f}")
+        pc4.metric("평가손익", f"{_fx_pct:+.2f}%", delta=f"{_direction} {_lot:,}단위")
+    else:
+        st.info("현재 FX 포지션이 없습니다. 외환자동매매 페이지에서 오토파일럿을 시작하세요.")
+    if _fx_log:
+        with st.expander(f"FX 거래 로그 ({len(_fx_log)}건)", expanded=False):
+            st.text("\n".join(_fx_log[-20:]))
+
+with _crypto_tab:
+    _c_pos = st.session_state.get("c_position")
+    _c_log = st.session_state.get("c_trade_log", [])
+    if _c_pos:
+        from data.fetcher import get_crypto_price
+        _c_sym = str(_c_pos.get("symbol", st.session_state.get("c_symbol", "")))
+        _c_entry = float(_c_pos.get("entry_price", 0))
+        _c_curr = get_crypto_price(_c_sym) if _c_sym else 0.0
+        _c_amt = float(_c_pos.get("amount", 0))
+        _c_pct = (_c_curr / _c_entry - 1) * 100 if _c_entry else 0.0
+        _c_pnl_usd = (_c_curr - _c_entry) * _c_amt
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        cc1.metric("보유 코인", _c_sym)
+        cc2.metric("매수가", f"${_c_entry:,.2f}")
+        cc3.metric("현재가", f"${_c_curr:,.2f}")
+        cc4.metric("평가손익", f"{_c_pct:+.2f}%", delta=f"${_c_pnl_usd:+.2f}")
+    else:
+        st.info("현재 코인 포지션이 없습니다. 코인자동매매 페이지에서 오토파일럿을 시작하세요.")
+    if _c_log:
+        with st.expander(f"코인 거래 로그 ({len(_c_log)}건)", expanded=False):
+            st.text("\n".join(_c_log[-20:]))
+
+with _alert_tab:
+    st.caption("목표 가격 도달 시 화면에 알림을 표시합니다.")
+    if "price_alerts" not in st.session_state:
+        st.session_state["price_alerts"] = []
+
+    with st.form("add_alert_form"):
+        al_col1, al_col2, al_col3 = st.columns(3)
+        with al_col1:
+            _al_type = str(st.selectbox("자산 유형", ["코인", "외환"]) or "코인")
+        with al_col2:
+            from data.fetcher import CRYPTO_PAIRS, FX_PAIRS
+            _al_symbols = list(CRYPTO_PAIRS.keys()) if _al_type == "코인" else list(FX_PAIRS.keys())
+            _al_symbol = str(st.selectbox("종목", _al_symbols) or _al_symbols[0])
+        with al_col3:
+            _al_price = float(st.number_input("목표 가격", min_value=0.0001, value=100.0, step=1.0))
+        _al_direction = str(st.selectbox("조건", ["이상 (상단 돌파)", "이하 (하단 이탈)"]) or "이상 (상단 돌파)")
+        _al_submitted = st.form_submit_button("알림 추가", use_container_width=True)
+
+    if _al_submitted:
+        st.session_state["price_alerts"].append({
+            "type": _al_type, "symbol": _al_symbol,
+            "price": _al_price, "direction": _al_direction, "triggered": False,
+        })
+        st.success(f"알림 추가: {_al_symbol} {_al_direction} {_al_price:,.4f}")
+
+    alerts = st.session_state.get("price_alerts", [])
+    if alerts:
+        from data.fetcher import get_crypto_price, get_fx_spot_rate
+        for idx, alert in enumerate(alerts):
+            if alert.get("triggered"):
+                continue
+            sym = str(alert["symbol"])
+            curr = get_crypto_price(sym) if alert["type"] == "코인" else get_fx_spot_rate(sym)
+            target = float(alert["price"])
+            hit = (curr >= target) if "이상" in str(alert["direction"]) else (curr <= target)
+            status = "✅ 도달" if hit else "⏳ 대기"
+            if hit:
+                st.toast(f"🔔 {sym} 알림 도달! 현재: {curr:,.4f} / 목표: {target:,.4f}")
+                st.session_state["price_alerts"][idx]["triggered"] = True
+
+        alert_df = pd.DataFrame([{
+            "자산": a["symbol"], "유형": a["type"],
+            "조건": a["direction"], "목표가": a["price"],
+            "상태": "✅ 도달" if a.get("triggered") else "⏳ 대기",
+        } for a in alerts])
+        st.dataframe(alert_df, use_container_width=True, hide_index=True)
+
+        if st.button("완료된 알림 삭제", use_container_width=True):
+            st.session_state["price_alerts"] = [a for a in alerts if not a.get("triggered")]
+            st.rerun()
+    else:
+        st.info("설정된 알림이 없습니다.")
