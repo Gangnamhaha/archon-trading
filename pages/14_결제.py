@@ -529,6 +529,20 @@ with card_col3:
 st.subheader("결제 버튼")
 
 if pay_method == "Stripe (해외 카드)":
+    if not stripe_api_key or stripe is None:
+        with st.expander("🔑 Stripe 키 발급 방법 (5분)", expanded=not allow_demo_payments):
+            st.markdown("""
+1. [https://dashboard.stripe.com](https://dashboard.stripe.com) 접속 → 회원가입/로그인
+2. 좌측 메뉴 **Developers → API keys**
+3. **Secret key** 복사 (`sk_test_xxx...`)
+4. `.streamlit/secrets.toml` 또는 Streamlit Cloud Secrets에 추가:
+```toml
+STRIPE_SECRET_KEY = "sk_test_xxx"
+APP_BASE_URL = "https://archon-pro.streamlit.app"
+```
+5. 앱 재시작하면 실결제 버튼 자동 활성화
+            """)
+
     action_col1, action_col2 = st.columns(2)
     with action_col1:
         st.markdown("#### Plus")
@@ -538,8 +552,8 @@ if pay_method == "Stripe (해외 카드)":
             if st.button("Plus 연간 결제", use_container_width=True, key="stripe_plus_annual"):
                 _start_stripe_checkout("plus_annual")
         else:
-            st.warning("Stripe 키가 설정되지 않아 데모 결제 모드로 동작합니다.")
-            _render_demo_button("plus_monthly", "Plus 데모 결제", "stripe_plus_demo")
+            st.warning("Stripe 키 미설정 — 데모 모드")
+            _render_demo_button("plus_monthly", "✅ Plus 데모 결제 (테스트)", "stripe_plus_demo")
     with action_col2:
         st.markdown("#### Pro")
         if stripe_api_key and stripe is not None:
@@ -548,7 +562,7 @@ if pay_method == "Stripe (해외 카드)":
             if st.button("Pro 연간 결제", use_container_width=True, key="stripe_pro_annual"):
                 _start_stripe_checkout("pro_annual")
         else:
-            _render_demo_button("pro_monthly", "Pro 데모 결제", "stripe_pro_demo")
+            _render_demo_button("pro_monthly", "✅ Pro 데모 결제 (테스트)", "stripe_pro_demo")
 
 elif pay_method == "토스페이먼츠 (카드/계좌이체/카카오페이)":
     plus_plan_type = f"plus_{billing_cycle}"
@@ -558,20 +572,31 @@ elif pay_method == "토스페이먼츠 (카드/계좌이체/카카오페이)":
     except Exception:
         toss_client_key = ""
     if not toss_client_key:
-        st.warning("토스페이먼츠 키 미설정. `.streamlit/secrets.toml`에 `TOSS_CLIENT_KEY`를 추가하세요.")
+        with st.expander("🔑 토스페이먼츠 키 발급 방법 (5분)", expanded=not allow_demo_payments):
+            st.markdown("""
+1. [https://developers.tosspayments.com](https://developers.tosspayments.com) 접속 → 회원가입/로그인
+2. **내 개발정보** → 테스트 Client Key 복사 (`test_ck_xxx...`)
+3. `.streamlit/secrets.toml` 또는 Streamlit Cloud Secrets에 추가:
+```toml
+TOSS_CLIENT_KEY = "test_ck_xxx"
+APP_BASE_URL = "https://archon-pro.streamlit.app"
+```
+4. 앱 재시작하면 토스페이먼츠 버튼 자동 활성화
+            """)
+        st.warning("토스페이먼츠 키 미설정 — 데모 모드")
     action_col1, action_col2 = st.columns(2)
     with action_col1:
         st.markdown(f"#### Plus {str(_get_plan_details(plus_plan_type)['price_label'])}")
         if toss_client_key:
             _render_toss_button(plus_plan_type, toss_client_key)
         else:
-            _render_demo_button(plus_plan_type, "Plus 데모 결제", "toss_plus_demo")
+            _render_demo_button(plus_plan_type, "✅ Plus 데모 결제 (테스트)", "toss_plus_demo")
     with action_col2:
         st.markdown(f"#### Pro {str(_get_plan_details(pro_plan_type)['price_label'])}")
         if toss_client_key:
             _render_toss_button(pro_plan_type, toss_client_key)
         else:
-            _render_demo_button(pro_plan_type, "Pro 데모 결제", "toss_pro_demo")
+            _render_demo_button(pro_plan_type, "✅ Pro 데모 결제 (테스트)", "toss_pro_demo")
 
 elif pay_method == "아임포트 Portone (통합 PG)":
     plus_plan_type = f"plus_{billing_cycle}"
