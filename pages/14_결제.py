@@ -265,30 +265,53 @@ def _apply_demo_plan(plan_type: str):
 
 
 def _render_plan_card(title: str, price: str, accent_color: str, features: list[str], badge: str = ""):
+    is_free = price == "무료"
+    price_main = price
+    price_sub = ""
+    if "/" in price:
+        parts = price.split("/")
+        price_main = parts[0]
+        price_sub = "/" + parts[1]
+
     badge_html = ""
     if badge:
-        badge_html = (
-            f"<div style='display:inline-block;padding:0.2rem 0.55rem;border-radius:999px;"
-            f"background:{accent_color}22;color:{accent_color};font-size:0.75rem;font-weight:700;margin-bottom:0.9rem;'>"
-            f"{badge}</div>"
-        )
-    feature_rows = "<br>".join(f"• {feature}" for feature in features)
-    st.markdown(
-        f"""
+        badge_html = f"""
         <div style="
-            height:100%;padding:1.4rem;border-radius:18px;
-            border:1px solid {accent_color}55;
-            background:linear-gradient(180deg, rgba(18,24,38,0.96), rgba(10,14,23,0.92));
-            box-shadow:0 14px 32px rgba(15,23,42,0.28);
-        ">
-            {badge_html}
-            <h3 style="margin:0;color:{accent_color};">{title}</h3>
-            <div style="font-size:1.8rem;font-weight:800;color:#F8FAFC;margin:0.5rem 0 0.9rem 0;">{price}</div>
-            <div style="color:#A0AEC0;line-height:1.9;font-size:0.95rem;">{feature_rows}</div>
+            display:inline-block;padding:0.25rem 0.75rem;border-radius:999px;
+            background:linear-gradient(90deg,{accent_color}33,{accent_color}18);
+            color:{accent_color};font-size:0.75rem;font-weight:700;
+            border:1px solid {accent_color}44;margin-bottom:1rem;
+            letter-spacing:0.03em;
+        ">{badge}</div>"""
+
+    feature_rows = "".join(f"""
+        <div style="display:flex;align-items:center;gap:0.55rem;margin-bottom:0.55rem;">
+            <span style="color:{accent_color};font-size:0.95rem;flex-shrink:0;">✓</span>
+            <span style="color:#CBD5E0;font-size:0.92rem;">{f}</span>
+        </div>""" for f in features)
+
+    glow = f"0 0 0 1px {accent_color}33, 0 8px 32px {accent_color}18, 0 24px 48px rgba(0,0,0,0.45)"
+    top_border = f"3px solid {accent_color}" if not is_free else f"3px solid #334155"
+    bg = "linear-gradient(160deg, rgba(22,30,50,0.98) 0%, rgba(12,16,28,0.98) 100%)"
+
+    st.markdown(f"""
+    <div style="
+        position:relative;height:100%;padding:1.6rem 1.5rem 1.8rem;
+        border-radius:20px;border:1px solid {accent_color}30;
+        border-top:{top_border};
+        background:{bg};
+        box-shadow:{glow};
+        transition:transform 0.2s;
+    ">
+        {badge_html}
+        <div style="font-size:1.1rem;font-weight:700;color:{accent_color};letter-spacing:0.04em;margin-bottom:0.5rem;">{title}</div>
+        <div style="display:flex;align-items:baseline;gap:0.15rem;margin-bottom:1.2rem;">
+            <span style="font-size:2.2rem;font-weight:900;color:#F1F5F9;line-height:1;">{price_main}</span>
+            <span style="font-size:0.9rem;color:#64748B;font-weight:500;">{price_sub}</span>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        <div style="height:1px;background:linear-gradient(90deg,{accent_color}44,transparent);margin-bottom:1.1rem;"></div>
+        <div>{feature_rows}</div>
+    </div>""", unsafe_allow_html=True)
 
 
 def _render_toss_button(plan_type: str, toss_client_key: str):
