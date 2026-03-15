@@ -7,14 +7,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 from data.news import fetch_and_analyze, get_market_sentiment, NEWS_SOURCES
 from config.styles import inject_pro_css
-from config.auth import require_auth, is_pro
+from config.auth import require_auth, is_paid
 
 st.set_page_config(page_title="News Sentiment", page_icon="", layout="wide")
 require_auth()
 inject_pro_css()
 st.title("News & Sentiment Analysis")
 
-_user_is_pro = is_pro()
+_user_is_paid = is_paid()
 _MAX_FREE_ARTICLES = 5
 
 st.sidebar.header("Settings")
@@ -25,17 +25,18 @@ sources = st.sidebar.multiselect(
 )
 keyword = st.sidebar.text_input("Keyword Filter", placeholder="e.g. Samsung, NVIDIA")
 
-if not _user_is_pro:
+if not _user_is_paid:
     st.sidebar.info(f"🔒 Free 플랜: 하루 {_MAX_FREE_ARTICLES}건 조회 제한")
 
 if st.sidebar.button("Fetch News", type="primary", use_container_width=True):
     with st.spinner("Fetching news and analyzing sentiment..."):
+        keyword_value = keyword.strip()
         sentiment_summary = get_market_sentiment(sources)
-        news_df = fetch_and_analyze(sources, keyword if keyword else None)
+        news_df = fetch_and_analyze(sources, keyword_value)
 
-    if not _user_is_pro and not news_df.empty and len(news_df) > _MAX_FREE_ARTICLES:
+    if not _user_is_paid and not news_df.empty and len(news_df) > _MAX_FREE_ARTICLES:
         news_df = news_df.head(_MAX_FREE_ARTICLES)
-        st.warning(f"🔒 Free 플랜: 상위 {_MAX_FREE_ARTICLES}건만 표시됩니다. Pro 업그레이드 시 전체 조회 가능.")
+        st.warning(f"🔒 Free 플랜: 상위 {_MAX_FREE_ARTICLES}건만 표시됩니다. Plus 업그레이드 시 전체 조회 가능.")
 
     col1, col2, col3, col4 = st.columns(4)
     overall_color = "#00D4AA" if "긍정" in sentiment_summary["overall"] else (
@@ -66,7 +67,8 @@ if st.sidebar.button("Fetch News", type="primary", use_container_width=True):
             st.plotly_chart(fig_pie, use_container_width=True)
 
         with col_chart2:
-            source_sentiment = news_df.groupby(["출처", "감성"]).size().reset_index(name="count")
+            source_sentiment = news_df.groupby(["출처", "감성"]).size().reset_index()
+            source_sentiment.columns = ["출처", "감성", "count"]
             fig_bar = px.bar(
                 source_sentiment, x="출처", y="count", color="감성",
                 color_discrete_map=colors, title="Sentiment by Source",
@@ -78,6 +80,9 @@ if st.sidebar.button("Fetch News", type="primary", use_container_width=True):
         st.subheader(f"News Articles ({len(news_df)})")
         for _, row in news_df.iterrows():
             sent_color = "#00D4AA" if row["감성"] == "긍정" else ("#FF6B6B" if row["감성"] == "부정" else "#A0AEC0")
+            published_at = str(row.get("발행일", "") or "")[:25]
+            article_link = str(row.get("링크", "") or "")
+            link_html = f" | <a href='{article_link}' target='_blank' style='color:#00D4AA;'>Link</a>" if article_link else ""
             st.markdown(f"""
             <div style="background:#1A1F2E; padding:1rem; border-radius:8px; border-left: 3px solid {sent_color}; margin-bottom:0.5rem;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -85,8 +90,8 @@ if st.sidebar.button("Fetch News", type="primary", use_container_width=True):
                     <span style="color:{sent_color}; font-weight:700;">{row['감성']} ({row['점수']:+.0f})</span>
                 </div>
                 <div style="color:#718096; font-size:0.8rem; margin-top:0.3rem;">
-                    {row['출처']} | {row.get('발행일', '')[:25]}
-                    {f" | <a href='{row['링크']}' target='_blank' style='color:#00D4AA;'>Link</a>" if row.get('링크') else ""}
+                    {row['출처']} | {published_at}
+                    {link_html}
                 </div>
             </div>
             """, unsafe_allow_html=True)

@@ -13,18 +13,18 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from data.fetcher import fetch_stock, get_us_popular_stocks
 from config.styles import inject_pro_css
-from config.auth import require_auth, is_pro
+from config.auth import require_auth, is_paid
 
 st.set_page_config(page_title="데이터 분석", page_icon="📈", layout="wide")
 require_auth()
 inject_pro_css()
 st.title("📈 주가 데이터 분석")
 
-_user_is_pro = is_pro()
+_user_is_paid = is_paid()
 
 # === 사이드바 설정 ===
 st.sidebar.header("설정")
-market = st.sidebar.selectbox("시장 선택", ["US (미국)", "KR (한국)"])
+market = str(st.sidebar.selectbox("시장 선택", ["US (미국)", "KR (한국)"]) or "US (미국)")
 market_code = market.split(" ")[0]
 
 # 종목 입력
@@ -39,12 +39,12 @@ else:
 period = st.sidebar.selectbox("조회 기간", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3)
 
 # 차트 간격 (Pro: 분봉/주봉 가능 / Free: 일봉만)
-if _user_is_pro:
+if _user_is_paid:
     interval = st.sidebar.selectbox("차트 간격", ["1d", "1wk", "1mo", "5m", "15m", "1h"], index=0,
-                                     help="Pro: 분봉/주봉/월봉 사용 가능")
+                                     help="Plus/Pro: 분봉/주봉/월봉 사용 가능")
 else:
     interval = "1d"
-    st.sidebar.info("🔒 차트 간격: 일봉만 (Pro 업그레이드 시 분봉/주봉 사용 가능)")
+    st.sidebar.info("🔒 차트 간격: 일봉만 (Plus 업그레이드 시 분봉/주봉 사용 가능)")
 
 # === 데이터 조회 ===
 if st.sidebar.button("조회", type="primary", use_container_width=True):
@@ -138,7 +138,7 @@ if "data_ticker" in st.session_state:
 st.markdown("---")
 st.subheader("다중 종목 수익률 비교")
 
-compare_market = st.selectbox("비교 시장", ["US (미국)", "KR (한국)"], key="compare_market")
+compare_market = str(st.selectbox("비교 시장", ["US (미국)", "KR (한국)"], key="compare_market") or "US (미국)")
 compare_market_code = compare_market.split(" ")[0]
 
 if compare_market_code == "US":

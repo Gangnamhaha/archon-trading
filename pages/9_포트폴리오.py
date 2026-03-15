@@ -15,7 +15,7 @@ from data.database import add_stock, remove_stock, get_portfolio
 from data.fetcher import fetch_stock
 from portfolio.tracker import PortfolioTracker
 from config.styles import inject_pro_css
-from config.auth import require_auth, is_pro
+from config.auth import require_auth, is_paid, is_pro
 
 st.set_page_config(page_title="포트폴리오", page_icon="💼", layout="wide")
 require_auth()
@@ -23,6 +23,7 @@ inject_pro_css()
 st.title("💼 포트폴리오 트래커")
 
 _user_is_pro = is_pro()
+_user_is_paid = is_paid()
 _MAX_FREE_STOCKS = 5
 
 tracker = PortfolioTracker()
@@ -31,39 +32,43 @@ tracker = PortfolioTracker()
 _current_portfolio = get_portfolio()
 _portfolio_count = len(_current_portfolio) if not _current_portfolio.empty else 0
 
-if not _user_is_pro and _portfolio_count >= _MAX_FREE_STOCKS:
-    st.warning(f"🔒 Free 플랜: 포트폴리오 종목 최대 {_MAX_FREE_STOCKS}개 (현재 {_portfolio_count}개). Pro 업그레이드 시 무제한.")
+if not _user_is_paid and _portfolio_count >= _MAX_FREE_STOCKS:
+    st.warning(f"🔒 Free 플랜: 포트폴리오 종목 최대 {_MAX_FREE_STOCKS}개 (현재 {_portfolio_count}개). Plus 업그레이드 시 무제한.")
     _can_add = False
 else:
     _can_add = True
-    if not _user_is_pro:
+    if not _user_is_paid:
         st.info(f"Free 플랜: 포트폴리오 {_portfolio_count}/{_MAX_FREE_STOCKS}종목")
 
 st.subheader("종목 추가")
 with st.form("add_stock_form"):
     col1, col2, col3 = st.columns(3)
     with col1:
-        add_market = st.selectbox("시장", ["KR", "US"])
+        add_market = str(st.selectbox("시장", ["KR", "US"]) or "KR")
         add_ticker = st.text_input("종목 코드/티커", placeholder="005930 또는 AAPL")
     with col2:
         add_name = st.text_input("종목명", placeholder="삼성전자")
         add_price = st.number_input("매수 단가", min_value=0.0, step=100.0, format="%.0f")
     with col3:
-        add_qty = st.number_input("수량", min_value=1, step=1, value=1)
+        add_qty = int(st.number_input("수량", min_value=1, step=1, value=1))
         add_date = st.date_input("매수일")
 
     submitted = st.form_submit_button("종목 추가", type="primary", use_container_width=True)
     if submitted and add_ticker and add_price > 0:
         if not _can_add:
-            st.error(f"Free 플랜 종목 한도({_MAX_FREE_STOCKS}개)에 도달했습니다. Pro로 업그레이드하세요.")
+            st.error(f"Free 플랜 종목 한도({_MAX_FREE_STOCKS}개)에 도달했습니다. Plus로 업그레이드하세요.")
         else:
-            tracker.add_holding(
-                ticker=add_ticker, market=add_market, name=add_name,
-                buy_price=add_price, quantity=add_qty,
-                buy_date=add_date.strftime("%Y-%m-%d")
-            )
-            st.success(f"{add_name} ({add_ticker}) 추가 완료!")
-            st.rerun()
+            buy_date_value = add_date[0] if isinstance(add_date, tuple) and add_date else add_date
+            if buy_date_value is None or isinstance(buy_date_value, tuple):
+                st.error("매수일을 선택하세요.")
+            else:
+                tracker.add_holding(
+                    ticker=add_ticker, market=add_market, name=add_name,
+                    buy_price=add_price, quantity=add_qty,
+                    buy_date=str(buy_date_value)
+                )
+                st.success(f"{add_name} ({add_ticker}) 추가 완료!")
+                st.rerun()
 
 st.markdown("---")
 
@@ -119,7 +124,7 @@ else:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("종목 삭제", type="secondary"):
                 if delete_id > 0:
-                    remove_stock(delete_id)
+                    remove_stock(int(delete_id))
                     st.success(f"ID {delete_id} 종목이 삭제되었습니다.")
                     st.rerun()
 
@@ -214,23 +219,24 @@ else:
                                 sharpe = (p_ret - 0.03) / p_vol if p_vol > 0 else 0
                                 if sharpe > best_sharpe:
                                     best_sharpe, best_w = sharpe, w
-                            opt_col1, opt_col2 = st.columns(2)
-                            with opt_col1:
-                                opt_df = pd.DataFrame({
-                                    "종목": list(returns_data.keys()),
-                                    "현재비율(%)": [round(100.0 / n, 1)] * n,
-                                    "최적비율(%)": [round(w * 100, 1) for w in best_w],
-                                })
-                                st.dataframe(opt_df, use_container_width=True, hide_index=True)
-                            with opt_col2:
-                                fig_opt = go.Figure(data=[go.Pie(
-                                    labels=list(returns_data.keys()),
-                                    values=[round(w * 100, 1) for w in best_w],
-                                    hole=0.4
-                                )])
-                                fig_opt.update_layout(title="최적 포트폴리오 비율", height=350, template="plotly_dark")
-                                st.plotly_chart(fig_opt, use_container_width=True)
-                            st.metric("최적 샤프 비율", f"{best_sharpe:.2f}")
+                            if best_w is not None:
+                                opt_col1, opt_col2 = st.columns(2)
+                                with opt_col1:
+                                    opt_df = pd.DataFrame({
+                                        "종목": list(returns_data.keys()),
+                                        "현재비율(%)": [round(100.0 / n, 1)] * n,
+                                        "최적비율(%)": [round(w * 100, 1) for w in best_w],
+                                    })
+                                    st.dataframe(opt_df, use_container_width=True, hide_index=True)
+                                with opt_col2:
+                                    fig_opt = go.Figure(data=[go.Pie(
+                                        labels=list(returns_data.keys()),
+                                        values=[round(w * 100, 1) for w in best_w],
+                                        hole=0.4
+                                    )])
+                                    fig_opt.update_layout(title="최적 포트폴리오 비율", height=350, template="plotly_dark")
+                                    st.plotly_chart(fig_opt, use_container_width=True)
+                                st.metric("최적 샤프 비율", f"{best_sharpe:.2f}")
                         else:
                             st.warning("최적화를 위해 최소 2개 종목의 1년치 데이터가 필요합니다.")
                     except Exception as e:

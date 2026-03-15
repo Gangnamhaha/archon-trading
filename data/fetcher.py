@@ -96,6 +96,98 @@ def get_kr_stock_list() -> pd.DataFrame:
         return pd.DataFrame(columns=["ticker", "name"])
 
 
+# ─── FX (외환) ────────────────────────────────────────────────────────────────
+
+FX_PAIRS: dict[str, str] = {
+    "USD/KRW": "USDKRW=X",
+    "EUR/USD": "EURUSD=X",
+    "GBP/USD": "GBPUSD=X",
+    "USD/JPY": "USDJPY=X",
+    "USD/CNY": "USDCNY=X",
+    "EUR/KRW": "EURKRW=X",
+    "AUD/USD": "AUDUSD=X",
+    "USD/CHF": "USDCHF=X",
+    "USD/CAD": "USDCAD=X",
+    "NZD/USD": "NZDUSD=X",
+}
+
+
+def fetch_fx_pair(pair: str, period: str = "1y") -> pd.DataFrame:
+    """외환 쌍 OHLCV 데이터 조회 (yfinance)"""
+    ticker_sym = FX_PAIRS.get(pair, pair)
+    try:
+        import time
+        for attempt in range(3):
+            try:
+                t = yf.Ticker(ticker_sym)
+                data = t.history(period=period)
+                if data.empty:
+                    if attempt < 2:
+                        time.sleep(1.5)
+                        continue
+                    return pd.DataFrame()
+                if isinstance(data.columns, pd.MultiIndex):
+                    data.columns = data.columns.get_level_values(0)
+                cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in data.columns]
+                data = data[cols].copy()
+                if data.index.tz is not None:
+                    data.index = data.index.tz_localize(None)
+                data.index.name = "Date"
+                return data
+            except Exception:
+                if attempt < 2:
+                    time.sleep(1.5)
+                    continue
+    except Exception as e:
+        print(f"[ERROR] FX fetch failed ({pair}): {e}")
+    return pd.DataFrame()
+
+
+def get_fx_spot_rate(pair: str) -> float:
+    """외환 현재 환율 조회"""
+    df = fetch_fx_pair(pair, period="5d")
+    if df.empty or "Close" not in df.columns:
+        return 0.0
+    return float(df["Close"].iloc[-1])
+
+
+# ─── Crypto (코인) ───────────────────────────────────────────────────────────
+
+CRYPTO_PAIRS: dict[str, str] = {
+    "BTC/USD": "BTC-USD",
+    "ETH/USD": "ETH-USD",
+    "BNB/USD": "BNB-USD",
+    "XRP/USD": "XRP-USD",
+    "SOL/USD": "SOL-USD",
+    "ADA/USD": "ADA-USD",
+    "DOGE/USD": "DOGE-USD",
+    "AVAX/USD": "AVAX-USD",
+    "DOT/USD": "DOT-USD",
+    "MATIC/USD": "MATIC-USD",
+    "LINK/USD": "LINK-USD",
+    "LTC/USD": "LTC-USD",
+    "BCH/USD": "BCH-USD",
+    "ATOM/USD": "ATOM-USD",
+    "UNI/USD": "UNI7083-USD",
+}
+
+
+def fetch_crypto(symbol: str, period: str = "1y") -> pd.DataFrame:
+    """암호화폐 OHLCV 데이터 조회 (yfinance)"""
+    ticker_sym = CRYPTO_PAIRS.get(symbol, symbol)
+    return fetch_us_stock(ticker_sym, period=period)
+
+
+def get_crypto_price(symbol: str) -> float:
+    """코인 현재 가격 조회 (USD)"""
+    df = fetch_crypto(symbol, period="5d")
+    if df.empty or "Close" not in df.columns:
+        return 0.0
+    return float(df["Close"].iloc[-1])
+
+
+
+
 def get_us_popular_stocks() -> pd.DataFrame:
     """주요 미국 종목 리스트"""
     stocks = [

@@ -276,10 +276,54 @@ def show_upgrade_prompt():
     """, unsafe_allow_html=True)
 
 
+def show_paid_prompt():
+    st.markdown("""
+    <div style="
+        max-width:520px;margin:3rem auto;padding:2.5rem;text-align:center;
+        background:rgba(26,31,46,0.85);
+        border:1px solid rgba(56,189,248,0.25);
+        border-radius:16px;
+        backdrop-filter:blur(12px);
+        box-shadow:0 8px 32px rgba(56,189,248,0.12);
+    ">
+        <div style="font-size:3rem;margin-bottom:0.5rem">✨</div>
+        <h2 style="color:#38BDF8;margin:0 0 0.5rem 0">Plus 이상 전용 기능</h2>
+        <p style="color:#A0AEC0;margin-bottom:1.5rem">
+            이 기능은 <b style="color:#38BDF8">Archon Plus</b> 또는 <b style="color:#00D4AA">Pro</b> 플랜에서 사용할 수 있습니다.<br>
+            업그레이드하고 고급 분석 기능을 잠금 해제하세요.
+        </p>
+        <div style="
+            background:rgba(56,189,248,0.08);border:1px solid rgba(56,189,248,0.15);
+            border-radius:10px;padding:1rem;margin-bottom:1.5rem;text-align:left;
+        ">
+            <div style="color:#E2E8F0;font-weight:600;margin-bottom:0.5rem">Plus 플랜 포함 기능:</div>
+            <div style="color:#A0AEC0;font-size:0.9rem;line-height:1.8">
+                ✅ 분봉/주봉/월봉 데이터 분석<br>
+                ✅ 무제한 기술적 지표<br>
+                ✅ 무제한 포트폴리오<br>
+                ✅ 뉴스감성분석<br>
+                ✅ 백테스팅 엔진<br>
+            </div>
+        </div>
+        <p style="color:#718096;font-size:0.8rem">
+            결제 페이지에서 Plus 또는 Pro 플랜을 선택하세요.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+
 def require_pro():
     user = require_auth()
     if not is_pro(user):
         show_upgrade_prompt()
+        st.stop()
+    return user
+
+
+def require_paid():
+    user = require_auth()
+    if not is_paid(user):
+        show_paid_prompt()
         st.stop()
     return user
 

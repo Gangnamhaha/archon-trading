@@ -17,10 +17,10 @@ from analysis.backtest import (
     optimize_strategy_params,
 )
 from config.styles import inject_pro_css, show_legal_disclaimer
-from config.auth import require_pro
+from config.auth import require_paid
 
 st.set_page_config(page_title="백테스팅", page_icon="🔬", layout="wide")
-require_pro()
+require_paid()
 inject_pro_css()
 st.title("🔬 백테스팅 시스템")
 st.markdown("과거 데이터를 기반으로 투자 전략의 성과를 테스트합니다.")

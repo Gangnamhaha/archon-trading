@@ -7,24 +7,25 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from data.fetcher import fetch_stock
 from analysis.technical import calc_all_indicators, get_signal_summary
 from config.styles import inject_pro_css
-from config.auth import require_auth, is_pro
+from config.auth import require_auth, is_paid
 
 st.set_page_config(page_title="기술적 분석", page_icon="📊", layout="wide")
 require_auth()
 inject_pro_css()
 st.title("📊 기술적 분석")
 
-_user_is_pro = is_pro()
+_user_is_paid = is_paid()
 _MAX_FREE_INDICATORS = 5
 
 # === 사이드바 설정 ===
 st.sidebar.header("설정")
-market = st.sidebar.selectbox("시장 선택", ["US (미국)", "KR (한국)"])
+market = str(st.sidebar.selectbox("시장 선택", ["US (미국)", "KR (한국)"]) or "US (미국)")
 market_code = market.split(" ")[0]
 
 if market_code == "US":
@@ -36,8 +37,8 @@ period = st.sidebar.selectbox("조회 기간", ["3mo", "6mo", "1y", "2y"], index
 
 st.sidebar.markdown("---")
 st.sidebar.header("지표 설정")
-if not _user_is_pro:
-    st.sidebar.info(f"🔒 Free 플랜: 지표 최대 {_MAX_FREE_INDICATORS}개 (Pro 업그레이드 시 무제한)")
+if not _user_is_paid:
+    st.sidebar.info(f"🔒 Free 플랜: 지표 최대 {_MAX_FREE_INDICATORS}개 (Plus 업그레이드 시 무제한)")
 show_sma = st.sidebar.checkbox("이동평균선 (SMA)", value=True)
 sma_periods = st.sidebar.multiselect("SMA 기간", [5, 10, 20, 60, 120], default=[5, 20, 60])
 show_bb = st.sidebar.checkbox("볼린저밴드", value=True)
@@ -47,7 +48,7 @@ show_rsi = st.sidebar.checkbox("RSI", value=True)
 rsi_period = st.sidebar.slider("RSI 기간", 5, 30, 14)
 show_macd = st.sidebar.checkbox("MACD", value=True)
 
-if not _user_is_pro:
+if not _user_is_paid:
     _selected = []
     if show_sma:
         for p in sma_periods:
@@ -184,9 +185,14 @@ if "ta_ticker" in st.session_state:
                 go.Scatter(x=df_ta.index, y=df_ta["RSI"], name="RSI", line=dict(color="purple", width=1)),
                 row=current_row, col=1
             )
-            fig.add_hline(y=70, line_dash="dash", line_color="red", opacity=0.5, row=current_row, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="green", opacity=0.5, row=current_row, col=1)
-            fig.add_hrect(y0=30, y1=70, fillcolor="gray", opacity=0.05, row=current_row, col=1)
+            fig.add_trace(
+                go.Scatter(x=df_ta.index, y=[70] * len(df_ta), name="RSI 70", line=dict(color="red", width=1, dash="dash")),
+                row=current_row, col=1
+            )
+            fig.add_trace(
+                go.Scatter(x=df_ta.index, y=[30] * len(df_ta), name="RSI 30", line=dict(color="green", width=1, dash="dash")),
+                row=current_row, col=1
+            )
             current_row += 1
 
         # 3. MACD 차트

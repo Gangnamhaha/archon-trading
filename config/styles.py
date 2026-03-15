@@ -338,6 +338,8 @@ _APP_SEARCH_INDEX = [
     {"path": "pages/16_약관.py", "label": "약관", "keywords": "이용약관 개인정보"},
     {"path": "pages/17_고객문의.py", "label": "고객문의", "keywords": "문의 고객센터 지원 요청"},
     {"path": "pages/18_자주하는질문.py", "label": "자주하는질문", "keywords": "FAQ 질문 답변 도움말"},
+    {"path": "pages/19_외환자동매매.py", "label": "외환자동매매", "keywords": "FX 환율 달러 유로 외환 자동매매"},
+    {"path": "pages/20_코인자동매매.py", "label": "코인자동매매", "keywords": "코인 비트코인 이더리움 암호화폐 자동매매"},
     {"path": "pages/99_관리자.py", "label": "관리자", "keywords": "사용자 플랜 운영"},
 ]
 
