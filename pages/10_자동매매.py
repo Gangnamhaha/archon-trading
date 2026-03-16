@@ -465,6 +465,30 @@ if api:
         _running_count = sum(1 for i in range(st.session_state["ap_slot_count"]) if st.session_state.get(f"ap{i}_running", False))
         st.caption(f"슬롯: {st.session_state['ap_slot_count']}/{_MAX_AP} | 동작 중: {_running_count}개")
 
+    _any_running = any(st.session_state.get(f"ap{i}_running", False) for i in range(st.session_state["ap_slot_count"]))
+    if _any_running:
+        _stop_col, _status_col = st.columns([1, 3])
+        with _stop_col:
+            if st.button("🛑 전체 오토파일럿 중지", type="primary", use_container_width=True, key="ap_stop_all"):
+                for _i in range(st.session_state["ap_slot_count"]):
+                    st.session_state[f"ap{_i}_running"] = False
+                    st.session_state[f"ap{_i}_holdings"] = {}
+                st.success("모든 오토파일럿이 중지되었습니다.")
+                st.rerun()
+        with _status_col:
+            _status_lines = []
+            for _i in range(st.session_state["ap_slot_count"]):
+                if st.session_state.get(f"ap{_i}_running", False):
+                    _h = st.session_state.get(f"ap{_i}_holdings", {})
+                    _mkt = st.session_state.get(f"ap{_i}_market", "KOSPI")
+                    _cap = int(st.session_state.get(f"ap{_i}_capital", 0))
+                    _dpnl = float(st.session_state.get(f"ap{_i}_pnl", 0.0))
+                    _status_lines.append(
+                        f"AP-{_i+1} 🟢 | {_mkt} | 투자금 {_cap:,}원 | "
+                        f"보유 {len(_h)}종목 | 손익 {_dpnl:+.2f}%"
+                    )
+            st.success("  ·  ".join(_status_lines) if _status_lines else "동작 중")
+
     _ap_tabs = st.tabs([f"AP-{i+1}" for i in range(st.session_state["ap_slot_count"])])
 
     for _slot_idx, _ap_tab in enumerate(_ap_tabs):
@@ -563,7 +587,61 @@ if api:
 
             if st.session_state[f"{_p}running"]:
                 import time as _apt
-                st.success(f"🚀 AP-{_slot_idx+1} 동작 중...")
+
+                _status_box = st.container()
+                with _status_box:
+                    st.markdown(f"""
+                    <div style="border:1px solid #00D4AA44;border-left:4px solid #00D4AA;
+                        background:rgba(0,212,170,0.07);border-radius:10px;
+                        padding:0.85rem 1.1rem;margin-bottom:0.7rem;">
+                        <span style="color:#00D4AA;font-weight:700;font-size:1rem;">
+                            🚀 AP-{_slot_idx+1} 오토파일럿 실행 중
+                        </span>
+                        <span style="color:#94A3B8;font-size:0.85rem;margin-left:0.7rem;">
+                            {datetime.now().strftime('%H:%M:%S')} 기준
+                        </span>
+                    </div>""", unsafe_allow_html=True)
+
+                    _live_m1, _live_m2, _live_m3, _live_m4 = st.columns(4)
+                    _cur_holdings = st.session_state.get(f"{_p}holdings", {})
+                    _live_m1.metric("시장", _market)
+                    _live_m2.metric("보유 종목", f"{len(_cur_holdings)}/{_max_stocks}")
+                    _invested = sum(v["avg_price"] * v["qty"] for v in _cur_holdings.values())
+                    _live_unit = " USD" if _market == "US" else " 원"
+                    _live_m3.metric("투자된 금액", f"{_invested:,.2f}{_live_unit}" if _market == "US" else f"{int(_invested):,}{_live_unit}")
+                    _live_m4.metric("손절/익절", f"-{_sl}% / +{_tp}%")
+
+                _cur_holdings_2 = st.session_state.get(f"{_p}holdings", {})
+                if _cur_holdings_2:
+                    with st.expander(f"📊 AP-{_slot_idx+1} 현재 보유 종목 ({len(_cur_holdings_2)}개)", expanded=True):
+                        _hd_live = [
+                            {
+                                "종목명": v["name"],
+                                "매수가": f"{v['avg_price']:,.2f}" if _market == "US" else f"{int(v['avg_price']):,}",
+                                "수량": v["qty"],
+                            }
+                            for v in _cur_holdings_2.values()
+                        ]
+                        st.dataframe(pd.DataFrame(_hd_live), use_container_width=True, hide_index=True)
+
+                _recent_log = st.session_state.get("trade_log", [])
+                _ap_log = [l for l in _recent_log if f"AP-{_slot_idx+1}" in str(l)]
+                if _ap_log:
+                    with st.expander(f"📋 AP-{_slot_idx+1} 실행 로그 (최근 {min(10, len(_ap_log))}건)", expanded=True):
+                        for _log_line in reversed(_ap_log[-10:]):
+                            _color = "#EF4444" if "손절" in str(_log_line) or "청산" in str(_log_line) else ("#10B981" if "매수" in str(_log_line) else "#F59E0B")
+                            st.markdown(
+                                f"<div style='color:{_color};font-family:monospace;font-size:0.85rem;"
+                                f"padding:0.2rem 0;border-bottom:1px solid #1E293B;'>{_log_line}</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                if st.button(f"🛑 AP-{_slot_idx+1} 즉시 중지", key=f"{_p}stop_now", use_container_width=True):
+                    st.session_state[f"{_p}running"] = False
+                    st.session_state[f"{_p}holdings"] = {}
+                    st.warning(f"AP-{_slot_idx+1} 즉시 중지됨")
+                    st.rerun()
+
                 try:
                     if _mode == "🔥 공격적 추천":
                         if _market == "US":
