@@ -12,13 +12,22 @@ from trading.nh_api import NHApi
 from trading.strategy import AVAILABLE_STRATEGIES
 from data.fetcher import fetch_kr_stock, fetch_us_stock, get_us_popular_stocks
 from data.database import add_trade, get_trades, get_autopilot_jobs, get_autopilot_logs
-from trading.autopilot_engine import (
-    start_background_autopilot,
-    stop_background_autopilot,
-    stop_all_background_autopilots,
-    is_running as ap_is_running,
-    get_running_count as ap_running_count,
-)
+try:
+    from trading.autopilot_engine import (
+        start_background_autopilot,
+        stop_background_autopilot,
+        stop_all_background_autopilots,
+        is_running as ap_is_running,
+        get_running_count as ap_running_count,
+    )
+    _AP_ENGINE_OK = True
+except Exception as _ap_engine_err:
+    _AP_ENGINE_OK = False
+    def start_background_autopilot(*a, **kw): return False
+    def stop_background_autopilot(*a, **kw): pass
+    def stop_all_background_autopilots(*a, **kw): pass
+    def ap_is_running(*a, **kw): return False
+    def ap_running_count(*a, **kw): return 0
 from config.styles import inject_pro_css, load_user_preferences, save_user_preferences, show_legal_disclaimer
 from config.auth import require_pro
 

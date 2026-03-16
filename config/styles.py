@@ -258,22 +258,31 @@ input,select,textarea{font-size:16px !important}
 </style>"""
 
 
-_HIDE_ADMIN_UI = """<style>
-.stToolbarActions,
-.stDeployButton,
-[data-testid="stToolbarActions"],
-[data-testid="manage-app-button"] {
+_HIDE_GITHUB_ONLY = """<style>
+/* GitHub 아이콘만 숨김 (일반 사용자) */
+[data-testid="stToolbarActions"] a[href*="github"],
+[data-testid="stToolbarActions"] button[title*="GitHub"],
+[data-testid="stToolbarActions"] [aria-label*="GitHub"],
+[data-testid="stToolbarActions"] [aria-label*="github"],
+.stToolbarActions a[href*="github"] {
     display: none !important;
     visibility: hidden !important;
 }
+/* 앱매니저(Manage app)는 모두에게 표시 */
+[data-testid="manage-app-button"],
+.stDeployButton {
+    display: flex !important;
+    visibility: visible !important;
+}
 </style>"""
 
-
-_SHOW_ADMIN_UI = """<style>
-.stToolbarActions,
-.stDeployButton,
+_SHOW_ALL_UI = """<style>
+/* 관리자 페이지: GitHub 포함 전체 표시 */
 [data-testid="stToolbarActions"],
-[data-testid="manage-app-button"] {
+[data-testid="stToolbarActions"] a,
+[data-testid="stToolbarActions"] button,
+[data-testid="manage-app-button"],
+.stDeployButton {
     display: flex !important;
     visibility: visible !important;
 }
@@ -373,11 +382,21 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
     st.markdown(_PRO_CSS, unsafe_allow_html=True)
     _viewer = st.session_state.get("user")
     _is_admin = bool(_viewer and _viewer.get("role") == "admin")
+    _caller_file = ""
+    try:
+        import traceback as _tb
+        for _frame in _tb.extract_stack():
+            if "pages/" in _frame.filename:
+                _caller_file = _frame.filename
+                break
+    except Exception:
+        pass
+    _is_admin_page = "관리자" in _caller_file or "99_" in _caller_file
     if hide_toolbar:
-        if _is_admin:
-            st.markdown(_SHOW_ADMIN_UI, unsafe_allow_html=True)
+        if _is_admin and _is_admin_page:
+            st.markdown(_SHOW_ALL_UI, unsafe_allow_html=True)
         else:
-            st.markdown(_HIDE_ADMIN_UI, unsafe_allow_html=True)
+            st.markdown(_HIDE_GITHUB_ONLY, unsafe_allow_html=True)
 
     user = _viewer
     if not user:
