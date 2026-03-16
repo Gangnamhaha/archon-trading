@@ -173,6 +173,48 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS autopilot_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            slot_idx INTEGER NOT NULL DEFAULT 0,
+            market TEXT NOT NULL DEFAULT 'KOSPI',
+            mode TEXT NOT NULL DEFAULT '일반 추천',
+            capital INTEGER NOT NULL DEFAULT 1000000,
+            max_stocks INTEGER NOT NULL DEFAULT 5,
+            max_per INTEGER NOT NULL DEFAULT 20,
+            stop_loss REAL NOT NULL DEFAULT 5.0,
+            take_profit REAL NOT NULL DEFAULT 15.0,
+            daily_limit REAL NOT NULL DEFAULT 5.0,
+            usdkrw REAL NOT NULL DEFAULT 1350.0,
+            status TEXT NOT NULL DEFAULT 'stopped',
+            last_run_at TEXT,
+            next_run_at TEXT,
+            holdings TEXT NOT NULL DEFAULT '{}',
+            daily_pnl REAL NOT NULL DEFAULT 0.0,
+            run_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(username, slot_idx)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS autopilot_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            slot_idx INTEGER NOT NULL DEFAULT 0,
+            log_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ap_jobs_user ON autopilot_jobs(username)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ap_logs_user ON autopilot_logs(username, created_at)")
+    except Exception:
+        pass
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS session_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             token TEXT UNIQUE NOT NULL,
@@ -1053,6 +1095,119 @@ def cleanup_expired_session_tokens():
     conn.execute("DELETE FROM session_tokens WHERE expires_at < ?", (datetime.now().isoformat(),))
     conn.commit()
     conn.close()
+
+
+def upsert_autopilot_job(
+    username: str,
+    slot_idx: int,
+    market: str,
+    mode: str,
+    capital: int,
+    max_stocks: int,
+    max_per: int,
+    stop_loss: float,
+    take_profit: float,
+    daily_limit: float,
+    usdkrw: float = 1350.0,
+    status: str = "running",
+) -> None:
+    init_db()
+    now = datetime.now().isoformat()
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO autopilot_jobs
+            (username, slot_idx, market, mode, capital, max_stocks, max_per,
+             stop_loss, take_profit, daily_limit, usdkrw, status, updated_at,
+             holdings, daily_pnl, run_count, next_run_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 0.0, 0, ?)
+        ON CONFLICT(username, slot_idx) DO UPDATE SET
+            market=excluded.market, mode=excluded.mode, capital=excluded.capital,
+            max_stocks=excluded.max_stocks, max_per=excluded.max_per,
+            stop_loss=excluded.stop_loss, take_profit=excluded.take_profit,
+            daily_limit=excluded.daily_limit, usdkrw=excluded.usdkrw,
+            status=excluded.status, updated_at=excluded.updated_at,
+            next_run_at=CASE WHEN excluded.status='running' THEN excluded.next_run_at ELSE NULL END
+        """,
+        (username, slot_idx, market, mode, capital, max_stocks, max_per,
+         stop_loss, take_profit, daily_limit, usdkrw, status, now, now),
+    )
+    conn.commit()
+    conn.close()
+
+
+def stop_autopilot_job(username: str, slot_idx: int) -> None:
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        "UPDATE autopilot_jobs SET status='stopped', updated_at=? WHERE username=? AND slot_idx=?",
+        (datetime.now().isoformat(), username, slot_idx),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_autopilot_jobs(username: str) -> list[dict[str, object]]:
+    init_db()
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM autopilot_jobs WHERE username=? ORDER BY slot_idx",
+        (username,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_autopilot_job_state(
+    username: str,
+    slot_idx: int,
+    holdings: str,
+    daily_pnl: float,
+    run_count: int,
+    next_run_at: str,
+) -> None:
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        """
+        UPDATE autopilot_jobs SET
+            holdings=?, daily_pnl=?, run_count=?, next_run_at=?,
+            last_run_at=?, updated_at=?
+        WHERE username=? AND slot_idx=?
+        """,
+        (holdings, daily_pnl, run_count,
+         next_run_at, datetime.now().isoformat(), datetime.now().isoformat(),
+         username, slot_idx),
+    )
+    conn.commit()
+    conn.close()
+
+
+def add_autopilot_log(username: str, slot_idx: int, log_type: str, message: str) -> None:
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO autopilot_logs (username, slot_idx, log_type, message) VALUES (?, ?, ?, ?)",
+        (username, slot_idx, log_type, message),
+    )
+    conn.execute(
+        "DELETE FROM autopilot_logs WHERE username=? AND slot_idx=? AND id NOT IN "
+        "(SELECT id FROM autopilot_logs WHERE username=? AND slot_idx=? ORDER BY id DESC LIMIT 100)",
+        (username, slot_idx, username, slot_idx),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_autopilot_logs(username: str, slot_idx: int, limit: int = 50) -> list[str]:
+    init_db()
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT message FROM autopilot_logs WHERE username=? AND slot_idx=? ORDER BY id DESC LIMIT ?",
+        (username, slot_idx, limit),
+    ).fetchall()
+    conn.close()
+    return [str(r["message"]) for r in reversed(rows)]
 
 
 # 모듈 임포트 시 DB 초기화

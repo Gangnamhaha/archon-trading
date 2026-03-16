@@ -11,7 +11,14 @@ from trading.kiwoom_api import KiwoomApi
 from trading.nh_api import NHApi
 from trading.strategy import AVAILABLE_STRATEGIES
 from data.fetcher import fetch_kr_stock, fetch_us_stock, get_us_popular_stocks
-from data.database import add_trade, get_trades
+from data.database import add_trade, get_trades, get_autopilot_jobs, get_autopilot_logs
+from trading.autopilot_engine import (
+    start_background_autopilot,
+    stop_background_autopilot,
+    stop_all_background_autopilots,
+    is_running as ap_is_running,
+    get_running_count as ap_running_count,
+)
 from config.styles import inject_pro_css, load_user_preferences, save_user_preferences, show_legal_disclaimer
 from config.auth import require_pro
 
@@ -534,16 +541,68 @@ if api:
                 if _market == "US":
                     st.info("US 시장은 현재 시뮬레이션 자동매매로 동작합니다. (추천/보유/손익 추적 지원)")
 
-            _b1, _b2 = st.columns(2)
+            _bg_running = ap_is_running(username, _slot_idx)
+            _b1, _b2, _b3 = st.columns(3)
             with _b1:
-                if st.button(
-                    "🛑 중지" if st.session_state[f"{_p}running"] else "🚀 시작",
-                    type="primary", use_container_width=True, key=f"{_p}toggle"
-                ):
-                    st.session_state[f"{_p}running"] = not st.session_state[f"{_p}running"]
-                    if not st.session_state[f"{_p}running"]:
+                if _bg_running:
+                    if st.button("🛑 중지", type="primary", use_container_width=True, key=f"{_p}toggle"):
+                        stop_background_autopilot(username, _slot_idx)
+                        st.session_state[f"{_p}running"] = False
+                        st.session_state[f"{_p}holdings"] = {}
                         st.success(f"AP-{_slot_idx+1} 중지됨")
-                    st.rerun()
+                        st.rerun()
+                else:
+                    if st.button("🚀 시작 (백그라운드)", type="primary", use_container_width=True, key=f"{_p}toggle"):
+                        start_background_autopilot(
+                            username=username,
+                            slot_idx=_slot_idx,
+                            market=_market,
+                            mode=_mode,
+                            capital=int(_capital),
+                            max_stocks=int(_max_stocks),
+                            max_per=int(_max_per),
+                            stop_loss=float(_sl),
+                            take_profit=float(_tp),
+                            daily_limit=float(_daily_limit),
+                            usdkrw=float(_usdkrw),
+                        )
+                        st.session_state[f"{_p}running"] = True
+                        st.toast(f"🚀 AP-{_slot_idx+1} 백그라운드 실행 시작! 화면을 꺼도 계속 동작합니다.")
+                        _notify_js = f"""
+<script>
+(function() {{
+    if ('Notification' in window && Notification.permission === 'granted') {{
+        new Notification('Archon AP-{_slot_idx+1} 시작', {{
+            body: '{_market} | {_mode} | 투자금 {int(_capital):,}원',
+            icon: '/favicon.ico'
+        }});
+    }} else if ('Notification' in window && Notification.permission !== 'denied') {{
+        Notification.requestPermission().then(p => {{
+            if (p === 'granted') {{
+                new Notification('Archon AP-{_slot_idx+1} 시작', {{
+                    body: '{_market} | {_mode}',
+                    icon: '/favicon.ico'
+                }});
+            }}
+        }});
+    }}
+}})();
+</script>"""
+                        st.markdown(_notify_js, unsafe_allow_html=True)
+                        st.rerun()
+            with _b3:
+                if st.button("🔔 알림 권한", use_container_width=True, key=f"{_p}notif"):
+                    st.markdown("""
+<script>
+(function() {
+    if ('Notification' in window) {
+        Notification.requestPermission().then(p => {
+            console.log('Notification permission:', p);
+        });
+    }
+})();
+</script>""", unsafe_allow_html=True)
+                    st.toast("브라우저 알림 권한을 허용해주세요.")
             with _b2:
                 if st.button("📊 1회 스캔", use_container_width=True, key=f"{_p}scan"):
                     with st.spinner("AI 스캔 중..."):
@@ -585,10 +644,43 @@ if api:
                         except Exception as _e:
                             st.error(f"스캔 실패: {_e}")
 
-            if st.session_state[f"{_p}running"]:
+            if _bg_running or st.session_state.get(f"{_p}running"):
                 import time as _apt
+                import json as _json_ap
+                _bg_job = next((j for j in get_autopilot_jobs(username) if int(str(j["slot_idx"])) == _slot_idx), None)
+                _bg_logs = get_autopilot_logs(username, _slot_idx, limit=20)
+                if _bg_job:
+                    _bg_holdings = _json_ap.loads(str(_bg_job.get("holdings") or "{}"))
+                    _bg_pnl = float(str(_bg_job.get("daily_pnl") or 0.0))
+                    _bg_runs = int(str(_bg_job.get("run_count") or 0))
+                    _bg_next = str(_bg_job.get("next_run_at", "-") or "-")[:19]
+                else:
+                    _bg_holdings = {}
+                    _bg_pnl = 0.0
+                    _bg_runs = 0
+                    _bg_next = "-"
+
+                _notify_trade_js = ""
+                if _bg_logs:
+                    _last_log = _bg_logs[-1] if _bg_logs else ""
+                    if any(k in _last_log for k in ["매수", "손절", "익절", "청산"]):
+                        _color_map = {"손절": "#EF4444", "익절": "#10B981", "청산": "#F59E0B", "매수": "#38BDF8"}
+                        _ncolor = next((v for k, v in _color_map.items() if k in _last_log), "#94A3B8")
+                        _notify_trade_js = f"""
+<script>
+(function() {{
+    if ('Notification' in window && Notification.permission === 'granted') {{
+        new Notification('Archon AP-{_slot_idx+1} 거래 알림', {{
+            body: '{_last_log[:80]}',
+            icon: '/favicon.ico'
+        }});
+    }}
+}})();
+</script>"""
 
                 _status_box = st.container()
+                if _notify_trade_js:
+                    st.markdown(_notify_trade_js, unsafe_allow_html=True)
                 with _status_box:
                     st.markdown(f"""
                     <div style="border:1px solid #00D4AA44;border-left:4px solid #00D4AA;
@@ -605,38 +697,40 @@ if api:
                     _live_m1, _live_m2, _live_m3, _live_m4 = st.columns(4)
                     _cur_holdings = st.session_state.get(f"{_p}holdings", {})
                     _live_m1.metric("시장", _market)
-                    _live_m2.metric("보유 종목", f"{len(_cur_holdings)}/{_max_stocks}")
-                    _invested = sum(v["avg_price"] * v["qty"] for v in _cur_holdings.values())
+                    _live_m2.metric("보유 종목", f"{len(_bg_holdings)}/{_max_stocks}")
+                    _invested = sum(float(v["avg_price"]) * float(v["qty"]) for v in _bg_holdings.values())
                     _live_unit = " USD" if _market == "US" else " 원"
                     _live_m3.metric("투자된 금액", f"{_invested:,.2f}{_live_unit}" if _market == "US" else f"{int(_invested):,}{_live_unit}")
-                    _live_m4.metric("손절/익절", f"-{_sl}% / +{_tp}%")
+                    _live_m4.metric("일일 손익 / 실행 횟수", f"{_bg_pnl:+.2f}% / {_bg_runs}회")
 
-                _cur_holdings_2 = st.session_state.get(f"{_p}holdings", {})
-                if _cur_holdings_2:
-                    with st.expander(f"📊 AP-{_slot_idx+1} 현재 보유 종목 ({len(_cur_holdings_2)}개)", expanded=True):
+                if _bg_holdings:
+                    with st.expander(f"📊 AP-{_slot_idx+1} 현재 보유 종목 ({len(_bg_holdings)}개)", expanded=True):
                         _hd_live = [
                             {
                                 "종목명": v["name"],
-                                "매수가": f"{v['avg_price']:,.2f}" if _market == "US" else f"{int(v['avg_price']):,}",
+                                "매수가": f"{float(v['avg_price']):,.2f}" if _market == "US" else f"{int(float(v['avg_price'])):,}",
                                 "수량": v["qty"],
                             }
-                            for v in _cur_holdings_2.values()
+                            for v in _bg_holdings.values()
                         ]
                         st.dataframe(pd.DataFrame(_hd_live), use_container_width=True, hide_index=True)
 
-                _recent_log = st.session_state.get("trade_log", [])
-                _ap_log = [l for l in _recent_log if f"AP-{_slot_idx+1}" in str(l)]
-                if _ap_log:
-                    with st.expander(f"📋 AP-{_slot_idx+1} 실행 로그 (최근 {min(10, len(_ap_log))}건)", expanded=True):
-                        for _log_line in reversed(_ap_log[-10:]):
-                            _color = "#EF4444" if "손절" in str(_log_line) or "청산" in str(_log_line) else ("#10B981" if "매수" in str(_log_line) else "#F59E0B")
+                if _bg_logs:
+                    with st.expander(f"📋 AP-{_slot_idx+1} 실행 로그 (최근 {len(_bg_logs)}건)", expanded=True):
+                        if _bg_next != "-":
+                            st.caption(f"다음 실행 예정: {_bg_next}")
+                        for _log_line in reversed(_bg_logs[-15:]):
+                            _color = "#EF4444" if any(k in _log_line for k in ["손절", "청산", "오류", "error"]) else \
+                                     "#10B981" if "매수" in _log_line else \
+                                     "#F59E0B" if "익절" in _log_line else "#94A3B8"
                             st.markdown(
-                                f"<div style='color:{_color};font-family:monospace;font-size:0.85rem;"
-                                f"padding:0.2rem 0;border-bottom:1px solid #1E293B;'>{_log_line}</div>",
+                                f"<div style='color:{_color};font-family:monospace;font-size:0.82rem;"
+                                f"padding:0.25rem 0;border-bottom:1px solid #1E293B;'>{_log_line}</div>",
                                 unsafe_allow_html=True,
                             )
 
                 if st.button(f"🛑 AP-{_slot_idx+1} 즉시 중지", key=f"{_p}stop_now", use_container_width=True):
+                    stop_background_autopilot(username, _slot_idx)
                     st.session_state[f"{_p}running"] = False
                     st.session_state[f"{_p}holdings"] = {}
                     st.warning(f"AP-{_slot_idx+1} 즉시 중지됨")
