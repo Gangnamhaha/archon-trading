@@ -537,10 +537,23 @@ def _show_login_form():
                     else:
                         user = verify_user(username, password)
                         if user:
+                            timeout_sec = _SESSION_TIMEOUT_OPTIONS[session_label]
                             st.session_state["authenticated"] = True
                             st.session_state["user"] = user
                             st.session_state["_login_time"] = datetime.now()
-                            st.session_state["_session_timeout"] = _SESSION_TIMEOUT_OPTIONS[session_label]
+                            st.session_state["_session_timeout"] = timeout_sec
+                            try:
+                                from data.database import create_session_token
+                                token = create_session_token(
+                                    username=str(user["username"]),
+                                    user_id=int(str(user["id"])),
+                                    role=str(user["role"]),
+                                    plan=str(user["plan"]),
+                                    session_timeout=timeout_sec,
+                                )
+                                st.session_state["_auth_token"] = token
+                            except Exception:
+                                pass
                             st.rerun()
                         else:
                             st.error("아이디 또는 비밀번호가 틀렸습니다.")
@@ -598,15 +611,131 @@ def _check_session_expiry():
             st.rerun()
 
 
+_WAKELOCK_JS = """
+<script>
+(function() {
+    let wakeLock = null;
+    async function requestWakeLock() {
+        try {
+            if ('wakeLock' in navigator) {
+                wakeLock = await navigator.wakeLock.request('screen');
+                wakeLock.addEventListener('release', () => { wakeLock = null; });
+            }
+        } catch (e) {}
+    }
+    document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState === 'visible' && wakeLock === null) {
+            await requestWakeLock();
+        }
+    });
+    requestWakeLock();
+})();
+</script>
+"""
+
+_LOCALSTORAGE_READER_JS = """
+<script>
+(function() {
+    const token = localStorage.getItem('archon_auth_token');
+    if (token) {
+        const url = new URL(window.location.href);
+        if (!url.searchParams.get('_auth')) {
+            url.searchParams.set('_auth', token);
+            window.history.replaceState({}, '', url.toString());
+        }
+    }
+})();
+</script>
+"""
+
+
+def _inject_localstorage_token(token: str, max_age_sec: int = 86400):
+    js = f"""
+<script>
+(function() {{
+    try {{
+        localStorage.setItem('archon_auth_token', '{token}');
+        const url = new URL(window.location.href);
+        url.searchParams.delete('_auth');
+        window.history.replaceState({{}}, '', url.toString());
+    }} catch(e) {{}}
+}})();
+</script>"""
+    st.markdown(js, unsafe_allow_html=True)
+
+
+def _clear_localstorage_token():
+    js = """
+<script>
+(function() {
+    try {
+        localStorage.removeItem('archon_auth_token');
+        const url = new URL(window.location.href);
+        url.searchParams.delete('_auth');
+        window.history.replaceState({}, '', url.toString());
+    } catch(e) {}
+})();
+</script>"""
+    st.markdown(js, unsafe_allow_html=True)
+
+
+def _try_restore_session_from_token():
+    if st.session_state.get("authenticated"):
+        return True
+
+    token = st.session_state.get("_auth_token", "")
+
+    if not token:
+        token = st.query_params.get("_auth", "")
+
+    if not token:
+        return False
+
+    try:
+        from data.database import validate_session_token, cleanup_expired_session_tokens
+        cleanup_expired_session_tokens()
+        user = validate_session_token(str(token))
+        if user:
+            st.session_state["authenticated"] = True
+            st.session_state["user"] = user
+            st.session_state["_login_time"] = datetime.now()
+            _raw_timeout = user.get("session_timeout", 86400)
+            st.session_state["_session_timeout"] = int(str(_raw_timeout)) if _raw_timeout else 86400
+            st.session_state["_auth_token"] = str(token)
+            try:
+                st.query_params.clear()
+            except Exception:
+                pass
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def require_auth():
+    st.markdown(_LOCALSTORAGE_READER_JS, unsafe_allow_html=True)
+    _try_restore_session_from_token()
     _check_session_expiry()
     if not st.session_state.get("authenticated", False):
         _show_login_form()
         st.stop()
+    token = st.session_state.get("_auth_token", "")
+    if token:
+        timeout_sec = int(str(st.session_state.get("_session_timeout", 86400)))
+        _inject_localstorage_token(token, timeout_sec)
+    st.markdown(_WAKELOCK_JS, unsafe_allow_html=True)
     return st.session_state["user"]
 
 
 def logout():
-    st.session_state["authenticated"] = False
-    st.session_state["user"] = None
+    token = st.session_state.get("_auth_token", "")
+    if token:
+        try:
+            from data.database import delete_session_token
+            delete_session_token(str(token))
+        except Exception:
+            pass
+    _clear_localstorage_token()
+    for key in ["authenticated", "user", "_login_time", "_session_timeout", "_auth_token"]:
+        st.session_state.pop(key, None)
     st.rerun()

@@ -6,11 +6,23 @@ from importlib import import_module, reload
 from unittest.mock import patch
 
 
+class _FakeQueryParams(dict):
+    def get(self, key, default=None):
+        return super().get(key, default)
+
+    def clear(self):
+        self.update({k: None for k in list(self.keys())})
+        for k in list(self.keys()):
+            del self[k]
+
+
 class _FakeStreamlit:
     def __init__(self, state=None):
         self.session_state = state or {}
+        self.query_params = _FakeQueryParams()
         self.warning_called = False
         self.rerun_called = False
+        self.markdown_called = False
 
     def warning(self, _message):
         self.warning_called = True
@@ -20,6 +32,9 @@ class _FakeStreamlit:
 
     def stop(self):
         raise RuntimeError("streamlit stop")
+
+    def markdown(self, *args, **kwargs):
+        self.markdown_called = True
 
 
 class AuthSmokeTests(unittest.TestCase):

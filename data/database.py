@@ -173,6 +173,26 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS session_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT UNIQUE NOT NULL,
+            username TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            plan TEXT NOT NULL,
+            session_timeout INTEGER NOT NULL DEFAULT 86400,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL
+        )
+    """)
+
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_tokens_token ON session_tokens(token)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_tokens_expires ON session_tokens(expires_at)")
+    except Exception:
+        pass
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS customer_inquiries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
@@ -960,6 +980,79 @@ def apply_verified_payment(
         return "error"
     finally:
         conn.close()
+
+
+def create_session_token(
+    username: str,
+    user_id: int,
+    role: str,
+    plan: str,
+    session_timeout: int = 86400,
+) -> str:
+    import secrets as _secrets
+    init_db()
+    token = _secrets.token_urlsafe(48)
+    now = datetime.now()
+    if session_timeout > 0:
+        expires = now + timedelta(seconds=session_timeout)
+    else:
+        expires = now + timedelta(days=365 * 10)
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO session_tokens (token, username, user_id, role, plan, session_timeout, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (token, username, user_id, role, plan, session_timeout, expires.isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return token
+
+
+def validate_session_token(token: str) -> Optional[dict[str, object]]:
+    if not token:
+        return None
+    init_db()
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM session_tokens WHERE token = ?", (token,)
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    try:
+        expires = datetime.fromisoformat(str(row["expires_at"]))
+    except ValueError:
+        return None
+    if datetime.now() > expires:
+        delete_session_token(token)
+        return None
+    return {
+        "id": int(row["user_id"]),
+        "username": str(row["username"]),
+        "role": str(row["role"]),
+        "plan": str(row["plan"]),
+        "session_timeout": int(row["session_timeout"]),
+    }
+
+
+def delete_session_token(token: str):
+    if not token:
+        return
+    init_db()
+    conn = get_connection()
+    conn.execute("DELETE FROM session_tokens WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
+
+
+def cleanup_expired_session_tokens():
+    init_db()
+    conn = get_connection()
+    conn.execute("DELETE FROM session_tokens WHERE expires_at < ?", (datetime.now().isoformat(),))
+    conn.commit()
+    conn.close()
 
 
 # 모듈 임포트 시 DB 초기화
