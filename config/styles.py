@@ -134,12 +134,18 @@ input,select,textarea{font-size:16px !important}
     .stCheckbox label{padding:0.4rem 0 !important}
 }
 
-.mobile-bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#1A1F2E;border-top:1px solid rgba(0,212,170,0.2);z-index:999998;padding:0.3rem 0 env(safe-area-inset-bottom,0.3rem);box-shadow:0 -4px 12px rgba(0,0,0,0.4)}
+.mobile-bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#1A1F2E;border-top:1px solid rgba(0,212,170,0.2);z-index:2147483647;padding:0.3rem 0 env(safe-area-inset-bottom,0.3rem);box-shadow:0 -4px 12px rgba(0,0,0,0.4)}
 .mobile-bottom-nav .nav-items{display:flex;justify-content:space-around;align-items:center;max-width:500px;margin:0 auto}
 .mobile-bottom-nav .nav-item{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:#8892B0;font-size:0.65rem;padding:0.2rem 0.5rem;transition:color 0.2s}
 .mobile-bottom-nav .nav-item:hover{color:#00D4AA}
 .mobile-bottom-nav .nav-icon{font-size:1.2rem;margin-bottom:0.15rem}
-@media(max-width:768px){.mobile-bottom-nav{display:block !important}.main .block-container{padding-bottom:4.5rem !important}}
+@media(max-width:768px){
+.mobile-bottom-nav{display:block !important}
+.main .block-container{padding-bottom:5rem !important}
+[data-testid="manage-app-button"]{bottom:4.5rem !important;right:0.8rem !important}
+.stDeployButton{bottom:4.5rem !important;right:0.8rem !important}
+iframe[title="streamlitApp"] ~ * [data-testid="manage-app-button"]{bottom:4.5rem !important}
+}
 
 @media(max-width:768px){
 .stMetric{background:rgba(26,31,46,0.8) !important;border:1px solid rgba(0,212,170,0.15) !important;border-radius:12px !important;padding:0.8rem !important;margin-bottom:0.4rem !important}
