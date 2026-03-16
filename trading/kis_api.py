@@ -14,13 +14,18 @@ from config.settings import (
 class KISApi:
     """한국투자증권 Open API 클라이언트"""
 
-    def __init__(self, app_key: str = None, app_secret: str = None,
-                 account_no: str = None, base_url: str = None):
+    LIVE_URL = "https://openapi.koreainvestment.com:9443"
+    PAPER_URL = "https://openapivts.koreainvestment.com:29443"
+
+    def __init__(self, app_key: str = "", app_secret: str = "",
+                 account_no: str = "", base_url: str = ""):
         self.app_key = app_key or KIS_APP_KEY
         self.app_secret = app_secret or KIS_APP_SECRET
-        self.account_no = account_no or KIS_ACCOUNT_NO
+        _raw_account = account_no or KIS_ACCOUNT_NO or ""
+        self.account_no = _raw_account.replace("-", "").strip()
         self.product_code = KIS_ACCOUNT_PRODUCT_CODE
         self.base_url = base_url or KIS_BASE_URL
+        self.is_live = self.base_url == self.LIVE_URL
         self.access_token = None
         self.token_expires = None
 
@@ -164,61 +169,82 @@ class KISApi:
             return {"status": "fail", "error": str(e)}
 
     def get_balance(self) -> dict:
-        """잔고 조회"""
         if not self._is_configured():
             return {"error": "API 키 미설정"}
 
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-balance"
-        # 모의투자: VTTC8434R, 실전: TTTC8434R
-        tr_id = "VTTC8434R" if TRADING_MODE == "paper" else "TTTC8434R"
+        tr_id = "VTTC8434R" if not self.is_live else "TTTC8434R"
         headers = self._get_headers(tr_id)
 
+        cano = self.account_no[:8]
+        acnt_prdt_cd = self.account_no[8:10] if len(self.account_no) >= 10 else self.product_code
+
         params = {
-            "CANO": self.account_no[:8],
-            "ACNT_PRDT_CD": self.account_no[8:] if len(self.account_no) > 8 else self.product_code,
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
             "AFHR_FLPR_YN": "N",
             "OFL_YN": "",
             "INQR_DVSN": "02",
             "UNPR_DVSN": "01",
             "FUND_STTL_ICLD_YN": "N",
             "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "00",
+            "PRCS_DVSN": "01",
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": "",
         }
 
         try:
-            res = requests.get(url, headers=headers, params=params, timeout=10)
+            res = requests.get(url, headers=headers, params=params, timeout=15)
             res.raise_for_status()
             data = res.json()
+
             if data.get("rt_cd") == "0":
                 holdings = []
                 for item in data.get("output1", []):
-                    if int(item.get("hldg_qty", 0)) > 0:
+                    qty = int(item.get("hldg_qty", 0) or 0)
+                    if qty > 0:
                         holdings.append({
                             "종목코드": item.get("pdno", ""),
                             "종목명": item.get("prdt_name", ""),
-                            "보유수량": int(item.get("hldg_qty", 0)),
-                            "매수평균가": int(float(item.get("pchs_avg_pric", 0))),
-                            "현재가": int(item.get("prpr", 0)),
-                            "평가금액": int(item.get("evlu_amt", 0)),
-                            "평가손익": int(item.get("evlu_pfls_amt", 0)),
-                            "수익률": float(item.get("evlu_pfls_rt", 0)),
+                            "보유수량": qty,
+                            "매수평균가": int(float(item.get("pchs_avg_pric", 0) or 0)),
+                            "현재가": int(item.get("prpr", 0) or 0),
+                            "평가금액": int(item.get("evlu_amt", 0) or 0),
+                            "평가손익": int(item.get("evlu_pfls_amt", 0) or 0),
+                            "수익률": float(item.get("evlu_pfls_rt", 0) or 0),
                         })
 
-                output2 = data.get("output2", [{}])
+                output2 = data.get("output2", [])
                 summary = output2[0] if output2 else {}
+
+                def _int(v: object) -> int:
+                    try:
+                        return int(str(v).replace(",", "").strip() or "0")
+                    except Exception:
+                        return 0
 
                 return {
                     "holdings": holdings,
-                    "총평가금액": int(summary.get("tot_evlu_amt", 0)),
-                    "총매입금액": int(summary.get("pchs_amt_smtl_amt", 0)),
-                    "총평가손익": int(summary.get("evlu_pfls_smtl_amt", 0)),
-                    "예수금": int(summary.get("dnca_tot_amt", 0)),
+                    "총평가금액": _int(summary.get("tot_evlu_amt", 0)),
+                    "총매입금액": _int(summary.get("pchs_amt_smtl_amt", 0)),
+                    "총평가손익": _int(summary.get("evlu_pfls_smtl_amt", 0)),
+                    "예수금": _int(summary.get("dnca_tot_amt", 0)),
+                    "mode": "실전" if self.is_live else "모의투자",
+                    "tr_id": tr_id,
+                    "cano": cano,
+                    "acnt_prdt_cd": acnt_prdt_cd,
+                    "_raw_output2": summary,
                 }
-            return {"error": data.get("msg1", "잔고 조회 실패")}
+
+            return {
+                "error": data.get("msg1", "잔고 조회 실패"),
+                "rt_cd": data.get("rt_cd"),
+                "msg_cd": data.get("msg_cd"),
+                "mode": "실전" if self.is_live else "모의투자",
+                "tr_id": tr_id,
+            }
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "tr_id": tr_id}
 
     def get_status(self) -> dict:
         """API 연결 상태 확인"""

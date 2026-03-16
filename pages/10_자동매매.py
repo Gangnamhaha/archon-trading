@@ -233,23 +233,57 @@ if api:
     st.markdown("---")
 
     st.subheader("잔고 조회")
-    if st.button("잔고 새로고침"):
+    _bal_col1, _bal_col2 = st.columns([1, 1])
+    with _bal_col1:
+        _show_debug = st.checkbox("🔍 API 응답 디버그 표시", key="bal_debug")
+    with _bal_col2:
+        _refresh_btn = st.button("잔고 새로고침", type="primary", use_container_width=True)
+
+    if _refresh_btn:
         with st.spinner("잔고 조회 중..."):
             balance = api.get_balance()
-            if "error" in balance:
-                st.error(f"잔고 조회 실패: {balance['error']}")
-            else:
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("총 평가금액", f"{balance.get('총평가금액', 0):,}원")
-                col2.metric("총 매입금액", f"{balance.get('총매입금액', 0):,}원")
-                col3.metric("총 평가손익", f"{balance.get('총평가손익', 0):,}원")
-                col4.metric("예수금", f"{balance.get('예수금', 0):,}원")
 
-                holdings = balance.get("holdings", [])
-                if holdings:
-                    st.dataframe(pd.DataFrame(holdings), use_container_width=True)
-                else:
-                    st.info("보유 종목이 없습니다.")
+        if "error" in balance:
+            st.error(f"잔고 조회 실패: {balance['error']}")
+            st.caption(f"TR_ID: {balance.get('tr_id', '?')} | 모드: {balance.get('mode', '?')} | 오류코드: {balance.get('msg_cd', '?')}")
+            if balance.get('rt_cd') and balance.get('rt_cd') != '0':
+                st.warning(
+                    "💡 **잔고가 0원으로 나오거나 오류가 발생하는 주요 원인:**\n\n"
+                    "1. **거래 모드 불일치** — 실제 계좌인데 '모의투자'로 연결했을 경우\n"
+                    "   → API 연결 시 거래 모드를 **'실전투자'**로 변경하세요\n\n"
+                    "2. **계좌번호 형식** — 계좌번호는 숫자만 입력 (하이픈 제외)\n"
+                    "   → 예: `12345678` + `01` 형식 (총 10자리)\n\n"
+                    "3. **App Key/Secret** — 실전투자용 키인지 확인\n"
+                    "   → 모의투자 키로 실전 계좌 조회 불가"
+                )
+        else:
+            _mode_badge = "🟢 실전투자" if balance.get("mode") == "실전" else "🟡 모의투자"
+            st.caption(f"{_mode_badge} | TR_ID: {balance.get('tr_id', '?')} | 계좌: {balance.get('cano', '?')}**")
+
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("총 평가금액", f"{balance.get('총평가금액', 0):,}원")
+            col2.metric("총 매입금액", f"{balance.get('총매입금액', 0):,}원")
+            col3.metric("총 평가손익", f"{balance.get('총평가손익', 0):,}원")
+            col4.metric("예수금", f"{balance.get('예수금', 0):,}원")
+
+            if all(balance.get(k, 0) == 0 for k in ["총평가금액", "예수금"]):
+                st.warning(
+                    "⚠️ 모든 금액이 0원입니다. 확인 사항:\n\n"
+                    "- **거래 모드**: 현재 **" + balance.get('mode', '?') + "** 모드입니다. "
+                    "실제 계좌라면 API 연결 시 **'실전투자'**를 선택하세요.\n"
+                    "- **계좌번호**: 숫자만 입력했는지 확인 (하이픈 없이)\n"
+                    "- **입금 반영**: 입금 후 익영업일 오전에 반영될 수 있습니다."
+                )
+
+            holdings = balance.get("holdings", [])
+            if holdings:
+                st.dataframe(pd.DataFrame(holdings), use_container_width=True)
+            else:
+                st.info("보유 종목이 없습니다.")
+
+            if _show_debug:
+                with st.expander("🔍 API 원본 응답 (output2)", expanded=True):
+                    st.json(balance.get("_raw_output2", {}))
 
     st.markdown("---")
 
