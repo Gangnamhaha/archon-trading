@@ -599,16 +599,29 @@ _SESSION_TIMEOUT_OPTIONS = {
 
 
 def _check_session_expiry():
+    if not st.session_state.get("authenticated"):
+        return
     timeout = st.session_state.get("_session_timeout", 86400)
     if timeout == 0:
         return
     login_time = st.session_state.get("_login_time")
-    if login_time:
-        elapsed = (datetime.now() - login_time).total_seconds()
-        if elapsed > timeout:
-            st.session_state.clear()
-            st.warning("세션이 만료되었습니다. 다시 로그인해주세요.")
-            st.rerun()
+    if not login_time:
+        st.session_state["_login_time"] = datetime.now()
+        return
+    elapsed = (datetime.now() - login_time).total_seconds()
+    if elapsed > timeout:
+        token = st.session_state.get("_auth_token", "")
+        if token:
+            try:
+                from data.database import delete_session_token
+                delete_session_token(str(token))
+            except Exception:
+                pass
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        _clear_localstorage_token()
+        st.warning("세션이 만료되었습니다. 다시 로그인해주세요.")
+        st.rerun()
 
 
 _WAKELOCK_JS = """
@@ -714,8 +727,9 @@ def _try_restore_session_from_token():
 
 def require_auth():
     st.markdown(_LOCALSTORAGE_READER_JS, unsafe_allow_html=True)
-    _try_restore_session_from_token()
-    _check_session_expiry()
+    restored = _try_restore_session_from_token()
+    if not restored:
+        _check_session_expiry()
     if not st.session_state.get("authenticated", False):
         _show_login_form()
         st.stop()

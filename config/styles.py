@@ -433,9 +433,8 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
         if show_logout:
             st.markdown("---")
             if st.button("Logout", key="_global_logout", use_container_width=True):
-                st.session_state["authenticated"] = False
-                st.session_state["user"] = None
-                st.rerun()
+                from config.auth import logout as _auth_logout
+                _auth_logout()
 
         st.markdown("---")
         from config.i18n import show_lang_selector, t as _t
