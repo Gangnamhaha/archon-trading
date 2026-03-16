@@ -412,13 +412,23 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
     st.markdown("""
 <div class="mobile-bottom-nav">
 <div class="nav-items">
-<a href="/" target="_self" class="nav-item"><span class="nav-icon">🏠</span>홈</a>
-<a href="/데이터분석" target="_self" class="nav-item"><span class="nav-icon">📊</span>분석</a>
-<a href="/자동매매" target="_self" class="nav-item"><span class="nav-icon">🤖</span>매매</a>
-<a href="/종목추천" target="_self" class="nav-item"><span class="nav-icon">🏆</span>추천</a>
-<a href="/AI채팅" target="_self" class="nav-item"><span class="nav-icon">💬</span>AI</a>
+<a onclick="archonNav('/')" class="nav-item" style="cursor:pointer"><span class="nav-icon">🏠</span>홈</a>
+<a onclick="archonNav('/데이터분석')" class="nav-item" style="cursor:pointer"><span class="nav-icon">📊</span>분석</a>
+<a onclick="archonNav('/자동매매')" class="nav-item" style="cursor:pointer"><span class="nav-icon">🤖</span>매매</a>
+<a onclick="archonNav('/종목추천')" class="nav-item" style="cursor:pointer"><span class="nav-icon">🏆</span>추천</a>
+<a onclick="archonNav('/AI채팅')" class="nav-item" style="cursor:pointer"><span class="nav-icon">💬</span>AI</a>
 </div>
 </div>
+<script>
+function archonNav(path) {
+    try {
+        var token = localStorage.getItem('archon_auth_token') || '';
+        var url = path;
+        if (token) { url += (path.indexOf('?') === -1 ? '?' : '&') + '_auth=' + encodeURIComponent(token); }
+        window.location.href = url;
+    } catch(e) { window.location.href = path; }
+}
+</script>
 """, unsafe_allow_html=True)
 
     from data.database import log_activity
