@@ -310,6 +310,21 @@ if api:
     st.markdown("---")
 
     st.subheader("수동 주문")
+
+    def _order_error_text(result: dict[str, object]) -> str:
+        msg = str(result.get("error") or "주문 실패")
+        msg_cd = str(result.get("msg_cd") or "").strip()
+        tr_id = str(result.get("tr_id") or "").strip()
+        mode = str(result.get("mode") or "").strip()
+        details = []
+        if msg_cd:
+            details.append(f"msg_cd={msg_cd}")
+        if tr_id:
+            details.append(f"tr_id={tr_id}")
+        if mode:
+            details.append(f"mode={mode}")
+        return f"{msg} ({', '.join(details)})" if details else msg
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -327,7 +342,7 @@ if api:
                         f"[{datetime.now().strftime('%H:%M:%S')}] 매수: {buy_ticker} x {buy_qty}"
                     )
                 else:
-                    st.error(f"매수 실패: {result.get('error')}")
+                    st.error(f"매수 실패: {_order_error_text(result)}")
 
     with col2:
         st.markdown("**매도 주문**")
@@ -344,7 +359,7 @@ if api:
                         f"[{datetime.now().strftime('%H:%M:%S')}] 매도: {sell_ticker} x {sell_qty}"
                     )
                 else:
-                    st.error(f"매도 실패: {result.get('error')}")
+                    st.error(f"매도 실패: {_order_error_text(result)}")
 
     st.markdown("---")
 
@@ -474,6 +489,8 @@ if api:
                     reason = "손절" if sl_triggered else "익절"
                     result = api.sell_order(auto_ticker, auto_qty, 0)
                     log_msg = f"[{now_str}] AUTO {reason}: {auto_ticker} x {auto_qty} → {result.get('status', 'unknown')}"
+                    if result.get("status") != "success":
+                        log_msg += f" | {_order_error_text(result)}"
                     st.session_state["trade_log"].append(log_msg)
                     if result.get("status") == "success":
                         add_trade(auto_ticker, "KR", "SELL", 0, auto_qty, f"스케줄러 {reason}")
@@ -481,6 +498,8 @@ if api:
                 elif trade_mode == "적립식 매수 (DCA)":
                     result = api.buy_order(auto_ticker, auto_qty, 0)
                     log_msg = f"[{now_str}] DCA BUY: {auto_ticker} x {auto_qty} → {result.get('status', 'unknown')}"
+                    if result.get("status") != "success":
+                        log_msg += f" | {_order_error_text(result)}"
                     st.session_state["trade_log"].append(log_msg)
                     if result.get("status") == "success":
                         add_trade(auto_ticker, "KR", "BUY", 0, auto_qty, "DCA 적립식 매수")
@@ -494,6 +513,8 @@ if api:
                     if signal == "BUY":
                         result = api.buy_order(auto_ticker, auto_qty, 0)
                         log_msg = f"[{now_str}] AUTO BUY: {auto_ticker} x {auto_qty} → {result.get('status', 'unknown')}"
+                        if result.get("status") != "success":
+                            log_msg += f" | {_order_error_text(result)}"
                         st.session_state["trade_log"].append(log_msg)
                         if result.get("status") == "success":
                             add_trade(auto_ticker, "KR", "BUY", 0, auto_qty, f"스케줄러 매수 ({strategy.name})")
@@ -501,6 +522,8 @@ if api:
                     elif signal == "SELL":
                         result = api.sell_order(auto_ticker, auto_qty, 0)
                         log_msg = f"[{now_str}] AUTO SELL: {auto_ticker} x {auto_qty} → {result.get('status', 'unknown')}"
+                        if result.get("status") != "success":
+                            log_msg += f" | {_order_error_text(result)}"
                         st.session_state["trade_log"].append(log_msg)
                         if result.get("status") == "success":
                             add_trade(auto_ticker, "KR", "SELL", 0, auto_qty, f"스케줄러 매도 ({strategy.name})")

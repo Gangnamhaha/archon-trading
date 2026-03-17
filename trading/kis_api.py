@@ -4,7 +4,7 @@
 """
 import requests
 import json
-from datetime import datetime
+from typing import Mapping
 from config.settings import (
     KIS_APP_KEY, KIS_APP_SECRET, KIS_ACCOUNT_NO,
     KIS_ACCOUNT_PRODUCT_CODE, KIS_BASE_URL, TRADING_MODE
@@ -57,7 +57,7 @@ class KISApi:
         except Exception as e:
             raise ConnectionError(f"토큰 발급 실패: {e}")
 
-    def _get_headers(self, tr_id: str) -> dict:
+    def _get_headers(self, tr_id: str) -> dict[str, str]:
         """API 요청 헤더 생성"""
         if not self.access_token:
             self.get_access_token()
@@ -69,7 +69,26 @@ class KISApi:
             "tr_id": tr_id,
         }
 
-    def get_price(self, ticker: str) -> dict:
+    def _account_parts(self) -> tuple[str, str]:
+        cano = self.account_no[:8]
+        acnt_prdt_cd = self.account_no[8:10] if len(self.account_no) >= 10 else self.product_code
+        return cano, acnt_prdt_cd
+
+    def _get_hashkey(self, body: Mapping[str, object]) -> str:
+        url = f"{self.base_url}/uapi/hashkey"
+        headers = {
+            "content-type": "application/json",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+        }
+        try:
+            res = requests.post(url, headers=headers, data=json.dumps(body), timeout=10)
+            res.raise_for_status()
+            return str(res.json().get("HASH", "") or "")
+        except Exception:
+            return ""
+
+    def get_price(self, ticker: str) -> dict[str, object]:
         """현재가 조회"""
         if not self._is_configured():
             return {"error": "API 키 미설정"}
@@ -102,73 +121,117 @@ class KISApi:
         except Exception as e:
             return {"error": str(e)}
 
-    def buy_order(self, ticker: str, quantity: int, price: int = 0) -> dict:
+    def buy_order(self, ticker: str, quantity: int, price: int = 0) -> dict[str, object]:
         """매수 주문"""
         if not self._is_configured():
             return {"error": "API 키 미설정"}
 
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
         # 모의투자: VTTC0802U, 실전: TTTC0802U
-        tr_id = "VTTC0802U" if TRADING_MODE == "paper" else "TTTC0802U"
-        headers = self._get_headers(tr_id)
+        tr_id = "TTTC0802U" if self.is_live else "VTTC0802U"
+
+        cano, acnt_prdt_cd = self._account_parts()
 
         body = {
-            "CANO": self.account_no[:8],
-            "ACNT_PRDT_CD": self.account_no[8:] if len(self.account_no) > 8 else self.product_code,
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
             "PDNO": ticker,
             "ORD_DVSN": "01" if price > 0 else "06",  # 01: 지정가, 06: 시장가
             "ORD_QTY": str(quantity),
-            "ORD_UNPR": str(price),
+            "ORD_UNPR": str(price if price > 0 else 0),
         }
+
+        headers = self._get_headers(tr_id)
+        headers["custtype"] = "P"
+        hashkey = self._get_hashkey(body)
+        if hashkey:
+            headers["hashkey"] = hashkey
 
         try:
             res = requests.post(url, headers=headers, data=json.dumps(body), timeout=10)
-            res.raise_for_status()
             data = res.json()
+            if not res.ok:
+                return {
+                    "status": "fail",
+                    "error": data.get("msg1") or f"HTTP {res.status_code}",
+                    "msg_cd": data.get("msg_cd", ""),
+                    "rt_cd": data.get("rt_cd", ""),
+                    "tr_id": tr_id,
+                    "mode": "실전" if self.is_live else "모의투자",
+                }
             if data.get("rt_cd") == "0":
                 return {
                     "status": "success",
                     "주문번호": data.get("output", {}).get("ODNO", ""),
                     "message": "매수 주문 완료",
                 }
-            return {"status": "fail", "error": data.get("msg1", "주문 실패")}
+            return {
+                "status": "fail",
+                "error": data.get("msg1", "주문 실패"),
+                "msg_cd": data.get("msg_cd", ""),
+                "rt_cd": data.get("rt_cd", ""),
+                "tr_id": tr_id,
+                "mode": "실전" if self.is_live else "모의투자",
+            }
         except Exception as e:
             return {"status": "fail", "error": str(e)}
 
-    def sell_order(self, ticker: str, quantity: int, price: int = 0) -> dict:
+    def sell_order(self, ticker: str, quantity: int, price: int = 0) -> dict[str, object]:
         """매도 주문"""
         if not self._is_configured():
             return {"error": "API 키 미설정"}
 
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
         # 모의투자: VTTC0801U, 실전: TTTC0801U
-        tr_id = "VTTC0801U" if TRADING_MODE == "paper" else "TTTC0801U"
-        headers = self._get_headers(tr_id)
+        tr_id = "TTTC0801U" if self.is_live else "VTTC0801U"
+
+        cano, acnt_prdt_cd = self._account_parts()
 
         body = {
-            "CANO": self.account_no[:8],
-            "ACNT_PRDT_CD": self.account_no[8:] if len(self.account_no) > 8 else self.product_code,
+            "CANO": cano,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
             "PDNO": ticker,
             "ORD_DVSN": "01" if price > 0 else "06",
             "ORD_QTY": str(quantity),
-            "ORD_UNPR": str(price),
+            "ORD_UNPR": str(price if price > 0 else 0),
         }
+
+        headers = self._get_headers(tr_id)
+        headers["custtype"] = "P"
+        hashkey = self._get_hashkey(body)
+        if hashkey:
+            headers["hashkey"] = hashkey
 
         try:
             res = requests.post(url, headers=headers, data=json.dumps(body), timeout=10)
-            res.raise_for_status()
             data = res.json()
+            if not res.ok:
+                return {
+                    "status": "fail",
+                    "error": data.get("msg1") or f"HTTP {res.status_code}",
+                    "msg_cd": data.get("msg_cd", ""),
+                    "rt_cd": data.get("rt_cd", ""),
+                    "tr_id": tr_id,
+                    "mode": "실전" if self.is_live else "모의투자",
+                }
             if data.get("rt_cd") == "0":
                 return {
                     "status": "success",
                     "주문번호": data.get("output", {}).get("ODNO", ""),
                     "message": "매도 주문 완료",
                 }
-            return {"status": "fail", "error": data.get("msg1", "주문 실패")}
+            return {
+                "status": "fail",
+                "error": data.get("msg1", "주문 실패"),
+                "msg_cd": data.get("msg_cd", ""),
+                "rt_cd": data.get("rt_cd", ""),
+                "tr_id": tr_id,
+                "mode": "실전" if self.is_live else "모의투자",
+            }
         except Exception as e:
             return {"status": "fail", "error": str(e)}
 
-    def get_balance(self) -> dict:
+    def get_balance(self) -> dict[str, object]:
         if not self._is_configured():
             return {"error": "API 키 미설정"}
 
@@ -176,8 +239,7 @@ class KISApi:
         tr_id = "VTTC8434R" if not self.is_live else "TTTC8434R"
         headers = self._get_headers(tr_id)
 
-        cano = self.account_no[:8]
-        acnt_prdt_cd = self.account_no[8:10] if len(self.account_no) >= 10 else self.product_code
+        cano, acnt_prdt_cd = self._account_parts()
 
         params = {
             "CANO": cano,
@@ -246,7 +308,7 @@ class KISApi:
         except Exception as e:
             return {"error": str(e), "tr_id": tr_id}
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, object]:
         """API 연결 상태 확인"""
         return {
             "configured": self._is_configured(),
