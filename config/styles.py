@@ -5,6 +5,7 @@ import os
 from typing import Any, Dict
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 _PWA_META = """
 <meta name="mobile-web-app-capable" content="yes">
@@ -441,58 +442,63 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
 <a onclick="archonNav('/AI채팅')" class="nav-item" style="cursor:pointer"><span class="nav-icon">💬</span>AI</a>
 </div>
 </div>
+""", unsafe_allow_html=True)
+
+    components.html("""
 <script>
-function archonNav(path) {
-    try {
-        var token = localStorage.getItem('archon_auth_token') || '';
-        var url = path;
-        if (token) { url += (path.indexOf('?') === -1 ? '?' : '&') + '_auth=' + encodeURIComponent(token); }
-        window.location.href = url;
-    } catch(e) { window.location.href = path; }
-}
-
-function archonWithAuth(url) {
-    try {
-        var token = localStorage.getItem('archon_auth_token') || '';
-        if (!token) { return url; }
-        var u = new URL(url, window.location.origin);
-        u.searchParams.set('_auth', token);
-        return u.pathname + u.search + u.hash;
-    } catch(e) {
-        return url;
-    }
-}
-
-function patchSidebarLinks() {
-    try {
-        var links = document.querySelectorAll('[data-testid="stSidebarNav"] a[href], [data-testid="stSidebarUserContent"] a[href]');
-        links.forEach(function(link) {
-            if (link.dataset.archonAuthPatched === '1') {
-                return;
-            }
-            link.dataset.archonAuthPatched = '1';
-            var href = link.getAttribute('href') || '';
-            if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.indexOf('mailto:') === 0) {
-                return;
-            }
-            link.setAttribute('href', archonWithAuth(href));
-            link.addEventListener('click', function() {
-                var latest = link.getAttribute('href') || href;
-                link.setAttribute('href', archonWithAuth(latest));
-            });
-        });
-    } catch(e) {}
-}
-
 (function syncArchonMobileOverlay(){
-    function applySidebarState() {
-        var sidebar = document.querySelector('[data-testid="stSidebar"]');
-        var opened = !!(sidebar && sidebar.getAttribute('aria-expanded') === 'true');
-        document.body.classList.toggle('archon-sidebar-open', opened);
+    var rootWindow = window.parent || window;
+    var rootDocument = rootWindow.document;
 
-        var isMobile = window.matchMedia('(max-width: 768px)').matches;
-        var manageBtn = document.querySelector('[data-testid="manage-app-button"]');
-        var deployBtn = document.querySelector('.stDeployButton');
+    function archonWithAuth(url) {
+        try {
+            var token = rootWindow.localStorage.getItem('archon_auth_token') || '';
+            if (!token) { return url; }
+            var u = new URL(url, rootWindow.location.origin);
+            u.searchParams.set('_auth', token);
+            return u.pathname + u.search + u.hash;
+        } catch (e) {
+            return url;
+        }
+    }
+
+    rootWindow.archonNav = function(path) {
+        try {
+            rootWindow.location.href = archonWithAuth(path);
+        } catch (e) {
+            rootWindow.location.href = path;
+        }
+    };
+
+    function patchSidebarLinks() {
+        try {
+            var links = rootDocument.querySelectorAll('[data-testid="stSidebarNav"] a[href], [data-testid="stSidebarUserContent"] a[href]');
+            links.forEach(function(link) {
+                if (link.dataset.archonAuthPatched === '1') {
+                    return;
+                }
+                link.dataset.archonAuthPatched = '1';
+                var href = link.getAttribute('href') || '';
+                if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.indexOf('mailto:') === 0) {
+                    return;
+                }
+                link.setAttribute('href', archonWithAuth(href));
+                link.addEventListener('click', function() {
+                    var latest = link.getAttribute('href') || href;
+                    link.setAttribute('href', archonWithAuth(latest));
+                });
+            });
+        } catch (e) {}
+    }
+
+    function applySidebarState() {
+        var sidebar = rootDocument.querySelector('[data-testid="stSidebar"]');
+        var opened = !!(sidebar && sidebar.getAttribute('aria-expanded') === 'true');
+        rootDocument.body.classList.toggle('archon-sidebar-open', opened);
+
+        var isMobile = rootWindow.matchMedia('(max-width: 768px)').matches;
+        var manageBtn = rootDocument.querySelector('[data-testid="manage-app-button"]');
+        var deployBtn = rootDocument.querySelector('.stDeployButton');
         var hideFloating = isMobile && opened;
 
         if (manageBtn) {
@@ -508,7 +514,7 @@ function patchSidebarLinks() {
     function bindObserver() {
         applySidebarState();
         patchSidebarLinks();
-        var sidebar = document.querySelector('[data-testid="stSidebar"]');
+        var sidebar = rootDocument.querySelector('[data-testid="stSidebar"]');
         if (!sidebar || sidebar.dataset.archonObserved === '1') {
             return;
         }
@@ -521,12 +527,12 @@ function patchSidebarLinks() {
     }
 
     bindObserver();
-    setTimeout(bindObserver, 350);
-    setTimeout(bindObserver, 1000);
-    setTimeout(patchSidebarLinks, 1500);
+    rootWindow.setTimeout(bindObserver, 350);
+    rootWindow.setTimeout(bindObserver, 1000);
+    rootWindow.setTimeout(patchSidebarLinks, 1500);
 })();
 </script>
-""", unsafe_allow_html=True)
+""", height=0, width=0)
 
     from data.database import log_activity
     _caller = inspect.stack()[1].filename

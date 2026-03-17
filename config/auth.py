@@ -2,9 +2,11 @@ import sqlite3
 import hashlib
 import secrets
 import os
+import json
 from datetime import datetime, timedelta
 from typing import Optional
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "portfolio.db")
@@ -535,49 +537,54 @@ _WAKELOCK_JS = """
 """
 
 _LOCALSTORAGE_READER_JS = """
-<script>
 (function() {
-    const token = localStorage.getItem('archon_auth_token');
+    var rootWindow = window.parent || window;
+    var token = rootWindow.localStorage.getItem('archon_auth_token');
     if (token) {
-        const url = new URL(window.location.href);
+        var url = new URL(rootWindow.location.href);
         if (!url.searchParams.get('_auth')) {
             url.searchParams.set('_auth', token);
-            window.history.replaceState({}, '', url.toString());
+            rootWindow.history.replaceState({}, '', url.toString());
         }
     }
 })();
-</script>
 """
 
 
+def _run_parent_js(js_body: str) -> None:
+    components.html(f"<script>{js_body}</script>", height=0, width=0)
+
+
 def _inject_localstorage_token(token: str, max_age_sec: int = 86400):
+    _ = max_age_sec
+    safe_token = json.dumps(str(token))
     js = f"""
-<script>
-(function() {{
-    try {{
-        localStorage.setItem('archon_auth_token', '{token}');
-        const url = new URL(window.location.href);
-        url.searchParams.delete('_auth');
-        window.history.replaceState({{}}, '', url.toString());
-    }} catch(e) {{}}
-}})();
-</script>"""
-    st.markdown(js, unsafe_allow_html=True)
+    (function() {{
+        var rootWindow = window.parent || window;
+        try {{
+            rootWindow.localStorage.setItem('archon_auth_token', {safe_token});
+            var url = new URL(rootWindow.location.href);
+            url.searchParams.delete('_auth');
+            rootWindow.history.replaceState({{}}, '', url.toString());
+        }} catch(e) {{}}
+    }})();
+    """
+    _run_parent_js(js)
 
 
 def _clear_localstorage_token():
     js = """
-<script>
-(function() {
-    try {
-        localStorage.removeItem('archon_auth_token');
-        const url = new URL(window.location.href);
-        url.searchParams.delete('_auth');
-        window.history.replaceState({}, '', url.toString());
-    } catch(e) {}
-})();
-</script>"""
-    st.markdown(js, unsafe_allow_html=True)
+    (function() {
+        var rootWindow = window.parent || window;
+        try {
+            rootWindow.localStorage.removeItem('archon_auth_token');
+            var url = new URL(rootWindow.location.href);
+            url.searchParams.delete('_auth');
+            rootWindow.history.replaceState({}, '', url.toString());
+        } catch(e) {}
+    })();
+    """
+    _run_parent_js(js)
 
 
 def _try_restore_session_from_token():
@@ -614,7 +621,7 @@ def _try_restore_session_from_token():
 
 
 def require_auth():
-    st.markdown(_LOCALSTORAGE_READER_JS, unsafe_allow_html=True)
+    _run_parent_js(_LOCALSTORAGE_READER_JS)
     restored = _try_restore_session_from_token()
     if not restored:
         _check_session_expiry()
