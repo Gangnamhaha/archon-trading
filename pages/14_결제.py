@@ -51,6 +51,13 @@ class PlanDetails(TypedDict):
     description: str
 
 
+def _clear_payment_query_params_keep_auth() -> None:
+    auth_token = str(st.query_params.get("_auth", "") or "")
+    st.query_params.clear()
+    if auth_token:
+        st.query_params["_auth"] = auth_token
+
+
 PLAN_CONFIG: dict[str, PlanDetails] = {
     "plus_monthly": {
         "tier": "plus",
@@ -181,22 +188,22 @@ def _sync_payment_success():
             )
             if payment_apply_status == "duplicate":
                 st.warning("이미 처리된 결제입니다. 중복 반영하지 않습니다.")
-                st.query_params.clear()
+                _clear_payment_query_params_keep_auth()
                 return
             if payment_apply_status == "applied":
                 update_user_plan(user["id"], target_plan)
                 st.success(f"Stripe 결제가 검증되어 {_get_plan_name(target_plan)} 플랜으로 업그레이드되었습니다.")
-                st.query_params.clear()
+                _clear_payment_query_params_keep_auth()
                 return
             if payment_apply_status == "user_not_found":
                 st.error("결제 사용자 정보를 찾을 수 없습니다. 관리자에게 문의하세요.")
-                st.query_params.clear()
+                _clear_payment_query_params_keep_auth()
                 return
             st.error("결제 반영 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
-            st.query_params.clear()
+            _clear_payment_query_params_keep_auth()
         else:
             st.error(f"결제 검증 실패: {result}")
-            st.query_params.clear()
+            _clear_payment_query_params_keep_auth()
         return
 
     plan_type = st.query_params.get("plan_type", "")
@@ -205,7 +212,7 @@ def _sync_payment_success():
         st.warning("자동 결제 확인이 지원되지 않는 결제수단입니다. 관리자 검증 후 플랜이 반영됩니다.")
     else:
         st.warning(f"선택한 {_get_plan_name(target_plan)} 결제는 관리자 검증 후 플랜이 반영됩니다.")
-    st.query_params.clear()
+    _clear_payment_query_params_keep_auth()
 
 
 def _create_checkout_session(plan_type: str):

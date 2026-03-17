@@ -1030,6 +1030,7 @@ def create_session_token(
     role: str,
     plan: str,
     session_timeout: int = 86400,
+    max_sessions: int = 2,
 ) -> str:
     import secrets as _secrets
     init_db()
@@ -1040,6 +1041,24 @@ def create_session_token(
     else:
         expires = now + timedelta(days=365 * 10)
     conn = get_connection()
+    now_iso = now.isoformat()
+    if max_sessions > 0:
+        active_count_row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM session_tokens WHERE username=? AND expires_at >= ?",
+            (username, now_iso),
+        ).fetchone()
+        active_count = int(active_count_row["cnt"]) if active_count_row is not None else 0
+        overflow = active_count - max_sessions + 1
+        if overflow > 0:
+            conn.execute(
+                "DELETE FROM session_tokens WHERE id IN ("
+                "SELECT id FROM session_tokens "
+                "WHERE username=? AND expires_at >= ? "
+                "ORDER BY datetime(created_at) ASC, id ASC "
+                "LIMIT ?"
+                ")",
+                (username, now_iso, overflow),
+            )
     conn.execute(
         """
         INSERT INTO session_tokens (token, username, user_id, role, plan, session_timeout, expires_at)

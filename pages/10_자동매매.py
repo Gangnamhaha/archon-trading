@@ -316,6 +316,8 @@ if api:
         msg_cd = str(result.get("msg_cd") or "").strip()
         tr_id = str(result.get("tr_id") or "").strip()
         mode = str(result.get("mode") or "").strip()
+        if msg_cd in {"IGW00017", "INVALID_PDNO_LOCAL"}:
+            msg = f"{msg} (국내주식 6자리 숫자 종목코드로 입력: 예 005930)"
         details = []
         if msg_cd:
             details.append(f"msg_cd={msg_cd}")

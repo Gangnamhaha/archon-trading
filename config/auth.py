@@ -368,131 +368,19 @@ def _show_login_form():
 
     st.markdown("""
     <div class="archon-landing">
-        <h2 style="margin:0 0 0.6rem 0;color:#E2E8F0;">AI가 당신의 투자를 자동화합니다</h2>
-        <p style="margin:0;color:#A0AEC0;">전략 수립부터 자동 실행까지, AI가 쉬지 않고 시장을 모니터링합니다.</p>
+        <h3 style="margin:0 0 0.5rem 0;color:#E2E8F0;">로그인 후 바로 자동매매를 시작하세요</h3>
+        <p style="margin:0;color:#A0AEC0;line-height:1.5;">
+            핵심 기능: 실시간 분석, 전략 자동매매, 오토파일럿, AI 어시스턴트
+        </p>
     </div>
     """, unsafe_allow_html=True)
 
-    stat1, stat2, stat3 = st.columns(3)
-    with stat1:
-        st.markdown("""
-        <div class="archon-card" style="text-align:center;">
-            <div style="font-size:1.5rem;font-weight:700;color:#00D4AA;">13+</div>
-            <div style="color:#A0AEC0;">기능 제공</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with stat2:
-        st.markdown("""
-        <div class="archon-card" style="text-align:center;">
-            <div style="font-size:1.5rem;font-weight:700;color:#00D4AA;">3개</div>
-            <div style="color:#A0AEC0;">증권사 연동</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with stat3:
-        st.markdown("""
-        <div class="archon-card" style="text-align:center;">
-            <div style="font-size:1.5rem;font-weight:700;color:#00D4AA;">5개</div>
-            <div style="color:#A0AEC0;">동시 오토파일럿</div>
-        </div>
-        """, unsafe_allow_html=True)
+    _k1, _k2, _k3 = st.columns(3)
+    _k1.metric("플랜", "Free / Plus / Pro")
+    _k2.metric("연동", "KIS / 키움 / NH")
+    _k3.metric("오토파일럿", "최대 5 슬롯")
 
-    feature1, feature2, feature3 = st.columns(3)
-    with feature1:
-        st.markdown("""
-        <div class="archon-card">
-            <h4 style="margin:0 0 0.35rem 0;color:#E2E8F0;">🤖 AI 오토파일럿</h4>
-            <p style="margin:0;color:#A0AEC0;">종목 추천부터 매매까지 완전 자동</p>
-        </div>
-        """, unsafe_allow_html=True)
-    with feature2:
-        st.markdown("""
-        <div class="archon-card">
-            <h4 style="margin:0 0 0.35rem 0;color:#E2E8F0;">📊 고급 분석 도구</h4>
-            <p style="margin:0;color:#A0AEC0;">기술적분석, 백테스팅, 리스크분석</p>
-        </div>
-        """, unsafe_allow_html=True)
-    with feature3:
-        st.markdown("""
-        <div class="archon-card">
-            <h4 style="margin:0 0 0.35rem 0;color:#E2E8F0;">💬 AI 채팅</h4>
-            <p style="margin:0;color:#A0AEC0;">OpenAI, Claude, Gemini 지원</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    price1, price2, price3 = st.columns(3)
-    with price1:
-        st.markdown("""
-        <div class="archon-price-card">
-            <h4 style="margin:0 0 0.5rem 0;color:#E2E8F0;">Free</h4>
-            <div style="color:#A0AEC0;line-height:1.8;">
-                기본 기능 무료<br>
-                일봉 데이터<br>
-                5개 지표<br>
-                포트폴리오 5종목
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    with price2:
-        st.markdown("""
-        <div class="archon-price-card plus">
-            <h4 style="margin:0 0 0.5rem 0;color:#38BDF8;">Plus 월 49,000원</h4>
-            <div style="color:#A0AEC0;line-height:1.8;">
-                분봉/주봉/월봉<br>
-                지표 무제한<br>
-                포트폴리오 무제한<br>
-                뉴스감성분석<br>
-                백테스팅
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    with price3:
-        st.markdown("""
-        <div class="archon-price-card pro">
-            <h4 style="margin:0 0 0.5rem 0;color:#00D4AA;">Pro 월 99,000원</h4>
-            <div style="color:#A0AEC0;line-height:1.8;">
-                Plus 전체 포함<br>
-                오토파일럿<br>
-                AI예측<br>
-                종목추천<br>
-                마케팅도구 / US 자동매매
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <div style="
-        background:linear-gradient(90deg, rgba(0,212,170,0.18), rgba(0,212,170,0.05));
-        border:1px solid rgba(0,212,170,0.35);
-        border-radius:14px;
-        padding:1rem;
-        margin:1rem 0 1.2rem 0;
-        text-align:center;
-    ">
-        <h3 style="margin:0;color:#00D4AA;">⚡ 지금 시작하세요</h3>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <div style="text-align:center;padding:2rem 0 1rem 0">
-        <h1 style="color:#00D4AA;margin:0">Archon</h1>
-        <p style="color:#A0AEC0">AI 주식자동매매플랫폼</p>
-    </div>""", unsafe_allow_html=True)
-
-    from config.styles import show_share_buttons
-    show_share_buttons()
-    st.markdown("---")
-    st.markdown("### 📧 뉴스레터 구독")
-    _nl1, _nl2 = st.columns([3, 1])
-    with _nl1:
-        _nl_email = st.text_input("이메일", placeholder="your@email.com", key="_nl_email", label_visibility="collapsed")
-    with _nl2:
-        if st.button("구독", type="primary", use_container_width=True, key="_nl_sub"):
-            if _nl_email and "@" in _nl_email:
-                from data.database import subscribe_newsletter
-                if subscribe_newsletter(_nl_email):
-                    st.success("구독 완료!")
-                else:
-                    st.info("이미 구독 중입니다.")
+    st.caption("불필요한 소개 화면을 줄이고 로그인/회원가입에 집중된 시작 화면입니다.")
     st.markdown("---")
 
     col1, col2, col3 = st.columns([1, 2, 1])

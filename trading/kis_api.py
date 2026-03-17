@@ -4,6 +4,7 @@
 """
 import requests
 import json
+import re
 from typing import Mapping
 from config.settings import (
     KIS_APP_KEY, KIS_APP_SECRET, KIS_ACCOUNT_NO,
@@ -88,17 +89,32 @@ class KISApi:
         except Exception:
             return ""
 
+    def _normalize_domestic_ticker(self, ticker: str) -> str:
+        code = str(ticker or "").strip().upper()
+        if code.startswith("A") and len(code) == 7 and code[1:].isdigit():
+            return code[1:]
+        if code.isdigit() and len(code) == 6:
+            return code
+        m = re.search(r"(\d{6})", code)
+        if m:
+            return m.group(1)
+        return code
+
     def get_price(self, ticker: str) -> dict[str, object]:
         """현재가 조회"""
         if not self._is_configured():
             return {"error": "API 키 미설정"}
+
+        norm_ticker = self._normalize_domestic_ticker(ticker)
+        if not (norm_ticker.isdigit() and len(norm_ticker) == 6):
+            return {"error": "종목코드는 국내주식 6자리 숫자여야 합니다. 예: 005930"}
 
         url = f"{self.base_url}/uapi/domestic-stock/v1/quotations/inquire-price"
         # 모의투자: FHKST01010100, 실전: FHKST01010100
         headers = self._get_headers("FHKST01010100")
         params = {
             "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": ticker,
+            "fid_input_iscd": norm_ticker,
         }
 
         try:
@@ -109,6 +125,7 @@ class KISApi:
                 output = data.get("output", {})
                 return {
                     "ticker": ticker,
+                    "종목코드": norm_ticker,
                     "현재가": int(output.get("stck_prpr", 0)),
                     "전일대비": int(output.get("prdy_vrss", 0)),
                     "등락률": float(output.get("prdy_ctrt", 0)),
@@ -126,17 +143,27 @@ class KISApi:
         if not self._is_configured():
             return {"error": "API 키 미설정"}
 
+        tr_id = "TTTC0802U" if self.is_live else "VTTC0802U"
+        norm_ticker = self._normalize_domestic_ticker(ticker)
+        if not (norm_ticker.isdigit() and len(norm_ticker) == 6):
+            return {
+                "status": "fail",
+                "error": "종목코드는 국내주식 6자리 숫자여야 합니다. 예: 005930",
+                "msg_cd": "INVALID_PDNO_LOCAL",
+                "tr_id": tr_id,
+                "mode": "실전" if self.is_live else "모의투자",
+            }
+
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
         # 모의투자: VTTC0802U, 실전: TTTC0802U
-        tr_id = "TTTC0802U" if self.is_live else "VTTC0802U"
 
         cano, acnt_prdt_cd = self._account_parts()
 
         body = {
             "CANO": cano,
             "ACNT_PRDT_CD": acnt_prdt_cd,
-            "PDNO": ticker,
-            "ORD_DVSN": "01" if price > 0 else "06",  # 01: 지정가, 06: 시장가
+            "PDNO": norm_ticker,
+            "ORD_DVSN": "00" if price > 0 else "01",  # 00: 지정가, 01: 시장가
             "ORD_QTY": str(quantity),
             "ORD_UNPR": str(price if price > 0 else 0),
         }
@@ -181,17 +208,27 @@ class KISApi:
         if not self._is_configured():
             return {"error": "API 키 미설정"}
 
+        tr_id = "TTTC0801U" if self.is_live else "VTTC0801U"
+        norm_ticker = self._normalize_domestic_ticker(ticker)
+        if not (norm_ticker.isdigit() and len(norm_ticker) == 6):
+            return {
+                "status": "fail",
+                "error": "종목코드는 국내주식 6자리 숫자여야 합니다. 예: 005930",
+                "msg_cd": "INVALID_PDNO_LOCAL",
+                "tr_id": tr_id,
+                "mode": "실전" if self.is_live else "모의투자",
+            }
+
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
         # 모의투자: VTTC0801U, 실전: TTTC0801U
-        tr_id = "TTTC0801U" if self.is_live else "VTTC0801U"
 
         cano, acnt_prdt_cd = self._account_parts()
 
         body = {
             "CANO": cano,
             "ACNT_PRDT_CD": acnt_prdt_cd,
-            "PDNO": ticker,
-            "ORD_DVSN": "01" if price > 0 else "06",
+            "PDNO": norm_ticker,
+            "ORD_DVSN": "00" if price > 0 else "01",
             "ORD_QTY": str(quantity),
             "ORD_UNPR": str(price if price > 0 else 0),
         }

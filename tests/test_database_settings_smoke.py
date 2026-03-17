@@ -179,6 +179,36 @@ class DatabaseSettingsSmokeTests(unittest.TestCase):
         self.assertFalse(logs.empty)
         self.assertIn("run_type", logs.columns)
 
+    def test_session_token_limit_evicts_oldest(self):
+        t1 = database.create_session_token(
+            username="multi_user",
+            user_id=101,
+            role="user",
+            plan="free",
+            session_timeout=86400,
+            max_sessions=2,
+        )
+        t2 = database.create_session_token(
+            username="multi_user",
+            user_id=101,
+            role="user",
+            plan="free",
+            session_timeout=86400,
+            max_sessions=2,
+        )
+        t3 = database.create_session_token(
+            username="multi_user",
+            user_id=101,
+            role="user",
+            plan="free",
+            session_timeout=86400,
+            max_sessions=2,
+        )
+
+        self.assertIsNone(database.validate_session_token(t1))
+        self.assertIsNotNone(database.validate_session_token(t2))
+        self.assertIsNotNone(database.validate_session_token(t3))
+
 
 if __name__ == "__main__":
     unittest.main()

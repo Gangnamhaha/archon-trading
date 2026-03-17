@@ -451,6 +451,39 @@ function archonNav(path) {
     } catch(e) { window.location.href = path; }
 }
 
+function archonWithAuth(url) {
+    try {
+        var token = localStorage.getItem('archon_auth_token') || '';
+        if (!token) { return url; }
+        var u = new URL(url, window.location.origin);
+        u.searchParams.set('_auth', token);
+        return u.pathname + u.search + u.hash;
+    } catch(e) {
+        return url;
+    }
+}
+
+function patchSidebarLinks() {
+    try {
+        var links = document.querySelectorAll('[data-testid="stSidebarNav"] a[href], [data-testid="stSidebarUserContent"] a[href]');
+        links.forEach(function(link) {
+            if (link.dataset.archonAuthPatched === '1') {
+                return;
+            }
+            link.dataset.archonAuthPatched = '1';
+            var href = link.getAttribute('href') || '';
+            if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.indexOf('mailto:') === 0) {
+                return;
+            }
+            link.setAttribute('href', archonWithAuth(href));
+            link.addEventListener('click', function() {
+                var latest = link.getAttribute('href') || href;
+                link.setAttribute('href', archonWithAuth(latest));
+            });
+        });
+    } catch(e) {}
+}
+
 (function syncArchonMobileOverlay(){
     function applySidebarState() {
         var sidebar = document.querySelector('[data-testid="stSidebar"]');
@@ -474,18 +507,23 @@ function archonNav(path) {
 
     function bindObserver() {
         applySidebarState();
+        patchSidebarLinks();
         var sidebar = document.querySelector('[data-testid="stSidebar"]');
         if (!sidebar || sidebar.dataset.archonObserved === '1') {
             return;
         }
         sidebar.dataset.archonObserved = '1';
-        var observer = new MutationObserver(applySidebarState);
-        observer.observe(sidebar, { attributes: true, attributeFilter: ['aria-expanded'] });
+        var observer = new MutationObserver(function() {
+            applySidebarState();
+            patchSidebarLinks();
+        });
+        observer.observe(sidebar, { attributes: true, childList: true, subtree: true, attributeFilter: ['aria-expanded', 'href'] });
     }
 
     bindObserver();
     setTimeout(bindObserver, 350);
     setTimeout(bindObserver, 1000);
+    setTimeout(patchSidebarLinks, 1500);
 })();
 </script>
 """, unsafe_allow_html=True)
