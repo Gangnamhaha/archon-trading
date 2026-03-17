@@ -7,12 +7,15 @@ import numpy as np
 import pandas as pd
 from data.fetcher import fetch_stock
 from analysis.ai_predict import predict_ensemble
-from config.styles import inject_pro_css, show_legal_disclaimer
-from config.auth import require_pro
+from config.styles import inject_pro_css, require_plan, show_legal_disclaimer
+from config.auth import require_auth
 
 st.set_page_config(page_title="AI Prediction", page_icon="", layout="wide")
-require_pro()
+user = require_auth()
 inject_pro_css()
+if not require_plan(user, "plus", "AI 예측"):
+    show_legal_disclaimer()
+    st.stop()
 st.title("AI Price Prediction")
 
 st.sidebar.header("Settings")

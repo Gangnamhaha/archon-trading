@@ -118,6 +118,13 @@ def _get_plan_name(plan: str) -> str:
     return {"free": "Free", "plus": "Plus", "pro": "Pro"}.get(plan, "Free")
 
 
+def _refresh_user_plan_in_session(plan: str) -> None:
+    refreshed = dict(st.session_state.get("user") or user)
+    refreshed["plan"] = plan
+    st.session_state["user"] = refreshed
+    user["plan"] = plan
+
+
 def _get_current_plan() -> str:
     if user.get("role") == "admin":
         return "pro"
@@ -192,6 +199,7 @@ def _sync_payment_success():
                 return
             if payment_apply_status == "applied":
                 update_user_plan(user["id"], target_plan)
+                _refresh_user_plan_in_session(target_plan)
                 st.success(f"Stripe 결제가 검증되어 {_get_plan_name(target_plan)} 플랜으로 업그레이드되었습니다.")
                 _clear_payment_query_params_keep_auth()
                 return
@@ -267,6 +275,7 @@ def _start_stripe_checkout(plan_type: str):
 def _apply_demo_plan(plan_type: str):
     target_plan = _get_plan_tier(plan_type)
     update_user_plan(user["id"], target_plan)
+    _refresh_user_plan_in_session(target_plan)
     st.success(f"데모 결제가 완료되어 {_get_plan_name(target_plan)} 플랜으로 변경되었습니다.")
     st.rerun()
 
@@ -681,6 +690,7 @@ if submitted:
     ok, message = use_referral_code(input_code, user["username"])
     if ok:
         update_user_plan(user["id"], "pro")
+        _refresh_user_plan_in_session("pro")
         st.success(message)
         st.rerun()
     else:

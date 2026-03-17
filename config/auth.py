@@ -3,6 +3,7 @@ import hashlib
 import secrets
 import os
 import json
+import platform
 from datetime import datetime, timedelta
 from typing import Optional
 import streamlit as st
@@ -433,14 +434,18 @@ def _show_login_form():
                             st.session_state["_login_time"] = datetime.now()
                             st.session_state["_session_timeout"] = timeout_sec
                             try:
-                                from data.database import create_session_token
+                                from data.database import create_session_token, update_session_device_info
+                                max_sessions = 1 if str(user.get("role", "")) == "admin" else 2
                                 token = create_session_token(
                                     username=str(user["username"]),
                                     user_id=int(str(user["id"])),
                                     role=str(user["role"]),
                                     plan=str(user["plan"]),
                                     session_timeout=timeout_sec,
+                                    max_sessions=max_sessions,
                                 )
+                                device_info, user_agent, ip_addr = _infer_client_meta()
+                                update_session_device_info(token, device_info, user_agent, ip_addr)
                                 st.session_state["_auth_token"] = token
                             except Exception:
                                 pass
@@ -486,6 +491,48 @@ _SESSION_TIMEOUT_OPTIONS = {
     "7일": 604800,
     "무제한": 0,
 }
+
+
+def _get_request_headers() -> dict[str, str]:
+    try:
+        headers = getattr(st.context, "headers", None)
+        if headers:
+            return {str(k).lower(): str(v) for k, v in dict(headers).items()}
+    except Exception:
+        pass
+    return {}
+
+
+def _infer_client_meta() -> tuple[str, str, str]:
+    headers = _get_request_headers()
+    user_agent = headers.get("user-agent", "")
+    xff = headers.get("x-forwarded-for", "")
+    ip_addr = xff.split(",")[0].strip() if xff else ""
+    if not ip_addr:
+        ip_addr = headers.get("x-real-ip", "")
+    sec_platform = headers.get("sec-ch-ua-platform", "").strip('"')
+    if sec_platform:
+        device_info = sec_platform
+    elif user_agent:
+        device_info = user_agent[:80]
+    else:
+        device_info = platform.system() or "unknown"
+    return device_info, user_agent, ip_addr
+
+
+def _clear_auth_state():
+    for key in [
+        "authenticated",
+        "user",
+        "_login_time",
+        "_session_timeout",
+        "_auth_token",
+        "_last_session_touch",
+        "_active_sessions_cache",
+        "_active_sessions_cache_at",
+        "_active_sessions_cache_key",
+    ]:
+        st.session_state.pop(key, None)
 
 
 def _check_session_expiry():
@@ -588,9 +635,6 @@ def _clear_localstorage_token():
 
 
 def _try_restore_session_from_token():
-    if st.session_state.get("authenticated"):
-        return True
-
     token = st.session_state.get("_auth_token", "")
 
     if not token:
@@ -600,21 +644,31 @@ def _try_restore_session_from_token():
         return False
 
     try:
-        from data.database import validate_session_token, cleanup_expired_session_tokens
+        from data.database import validate_session_token, cleanup_expired_session_tokens, touch_session
         cleanup_expired_session_tokens()
+        now = datetime.now()
+        last_touch = st.session_state.get("_last_session_touch")
         user = validate_session_token(str(token))
-        if user:
-            st.session_state["authenticated"] = True
-            st.session_state["user"] = user
-            st.session_state["_login_time"] = datetime.now()
-            _raw_timeout = user.get("session_timeout", 86400)
-            st.session_state["_session_timeout"] = int(str(_raw_timeout)) if _raw_timeout else 86400
-            st.session_state["_auth_token"] = str(token)
-            try:
-                st.query_params.clear()
-            except Exception:
-                pass
-            return True
+        if not user:
+            _clear_auth_state()
+            _clear_localstorage_token()
+            return False
+
+        if not isinstance(last_touch, datetime) or (now - last_touch).total_seconds() >= 2:
+            touch_session(str(token))
+            st.session_state["_last_session_touch"] = now
+
+        st.session_state["authenticated"] = True
+        st.session_state["user"] = user
+        st.session_state["_login_time"] = now
+        _raw_timeout = user.get("session_timeout", 86400)
+        st.session_state["_session_timeout"] = int(str(_raw_timeout)) if _raw_timeout else 86400
+        st.session_state["_auth_token"] = str(token)
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
+        return True
     except Exception:
         pass
     return False
@@ -645,6 +699,5 @@ def logout():
         except Exception:
             pass
     _clear_localstorage_token()
-    for key in ["authenticated", "user", "_login_time", "_session_timeout", "_auth_token"]:
-        st.session_state.pop(key, None)
+    _clear_auth_state()
     st.rerun()

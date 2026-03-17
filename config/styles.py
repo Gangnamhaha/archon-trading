@@ -2,6 +2,7 @@ import inspect
 import importlib
 import json
 import os
+from datetime import datetime
 from typing import Any, Dict
 
 import streamlit as st
@@ -406,6 +407,78 @@ def _render_app_search():
                 st.page_link(item["path"], label=f"{idx}. {item['label']}")
 
 
+def _format_session_time(value: object) -> str:
+    text = str(value or "")
+    if not text:
+        return "-"
+    try:
+        return datetime.fromisoformat(text).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return text[:16]
+
+
+def _render_device_manager(user: dict[str, object]):
+    username = str(user.get("username", ""))
+    if not username:
+        return
+
+    refresh_requested = st.button("목록 새로고침", key="_device_refresh", use_container_width=True)
+    cache_key = f"{username}::{st.session_state.get('_auth_token', '')}"
+    cache_at = st.session_state.get("_active_sessions_cache_at")
+    use_cache = (
+        not refresh_requested
+        and st.session_state.get("_active_sessions_cache_key") == cache_key
+        and isinstance(cache_at, datetime)
+        and (datetime.now() - cache_at).total_seconds() < 20
+    )
+
+    sessions = st.session_state.get("_active_sessions_cache", []) if use_cache else []
+    if not use_cache:
+        try:
+            from data.database import get_active_sessions
+            sessions = get_active_sessions(username)
+        except Exception:
+            sessions = []
+        st.session_state["_active_sessions_cache"] = sessions
+        st.session_state["_active_sessions_cache_key"] = cache_key
+        st.session_state["_active_sessions_cache_at"] = datetime.now()
+
+    if not sessions:
+        st.caption("활성 세션이 없습니다.")
+        return
+
+    current_token = str(st.session_state.get("_auth_token", ""))
+    st.caption(f"활성 기기 {len(sessions)}대")
+    for idx, sess in enumerate(sessions):
+        token = str(sess.get("token", ""))
+        is_current = token == current_token
+        device = str(sess.get("device_info", "") or "알 수 없는 기기")
+        ip_addr = str(sess.get("ip_addr", "") or "-")
+        last_seen = _format_session_time(sess.get("last_seen"))
+        expires_at = _format_session_time(sess.get("expires_at"))
+        badge = " (현재 기기)" if is_current else ""
+        with st.container(border=True):
+            st.markdown(f"**{device}{badge}**")
+            st.caption(f"IP: {ip_addr} | 최근 활동: {last_seen} | 만료: {expires_at}")
+            if is_current:
+                st.caption("현재 로그인 중인 기기입니다.")
+            else:
+                if st.button("강제 로그아웃", key=f"_kick_session_{idx}_{token[-8:]}", use_container_width=True):
+                    try:
+                        from data.database import force_logout_session
+                        kicked = force_logout_session(token)
+                    except Exception:
+                        kicked = False
+                    st.session_state.pop("_active_sessions_cache", None)
+                    st.session_state.pop("_active_sessions_cache_at", None)
+                    st.session_state.pop("_active_sessions_cache_key", None)
+                    if kicked:
+                        st.success("선택한 기기를 로그아웃했습니다.")
+                    else:
+                        st.warning("이미 종료된 세션입니다.")
+                    st.rerun()
+
+
 def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
     st.markdown(_PWA_META, unsafe_allow_html=True)
     st.markdown(_PRO_CSS, unsafe_allow_html=True)
@@ -549,6 +622,9 @@ def inject_pro_css(hide_toolbar: bool = True, show_logout: bool = True):
                 from config.auth import logout as _auth_logout
                 _auth_logout()
 
+        with st.expander("내 기기 관리", expanded=False):
+            _render_device_manager(user)
+
         st.markdown("---")
         from config.i18n import show_lang_selector, t as _t
         with st.expander("🌐 " + _t("language"), expanded=False):
@@ -642,6 +718,44 @@ def load_user_preferences(username: str, page: str) -> Dict[str, Any]:
 
 def show_legal_disclaimer():
     st.caption("⚠️ 본 서비스는 투자 참고용이며 투자자문에 해당하지 않습니다. 투자 결과의 책임은 이용자에게 있으며, 원금 손실이 발생할 수 있습니다.")
+
+
+def require_plan(user: Dict[str, Any], min_plan: str, feature_name: str) -> bool:
+    plan_order = {"free": 0, "plus": 1, "pro": 2}
+    required_plan = str(min_plan).lower()
+    if required_plan not in plan_order:
+        required_plan = "free"
+
+    role = str((user or {}).get("role", ""))
+    current_plan = str((user or {}).get("plan", "free")).lower()
+    if current_plan not in plan_order:
+        current_plan = "free"
+
+    if role == "admin" or plan_order[current_plan] >= plan_order[required_plan]:
+        return True
+
+    required_label = {"free": "Free", "plus": "Plus", "pro": "Pro"}[required_plan]
+    st.markdown(
+        f"""
+        <div style="
+            margin: 1.25rem 0;
+            padding: 1.25rem;
+            border-radius: 14px;
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(10, 14, 25, 0.95));
+        ">
+            <div style="font-size: 1.2rem; font-weight: 700; color: #E2E8F0; margin-bottom: 0.45rem;">
+                🔒 {feature_name}
+            </div>
+            <div style="color: #94A3B8; font-size: 0.96rem;">
+                이 기능은 <b style=\"color:#38BDF8;\">{required_label}</b> 플랜 이상에서 이용할 수 있습니다.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.link_button("업그레이드", "/결제", use_container_width=False)
+    return False
 
 
 def safe_run(func, fallback_msg="일시적 오류가 발생했습니다. 잠시 후 다시 시도해주세요."):

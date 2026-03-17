@@ -16,12 +16,15 @@ from analysis.backtest import (
     volatility_breakout_strategy, aggressive_momentum_strategy,
     optimize_strategy_params,
 )
-from config.styles import inject_pro_css, show_legal_disclaimer
-from config.auth import require_paid
+from config.styles import inject_pro_css, require_plan, show_legal_disclaimer
+from config.auth import require_auth
 
 st.set_page_config(page_title="백테스팅", page_icon="🔬", layout="wide")
-require_paid()
+user = require_auth()
 inject_pro_css()
+if not require_plan(user, "plus", "백테스팅"):
+    show_legal_disclaimer()
+    st.stop()
 st.title("🔬 백테스팅 시스템")
 st.markdown("과거 데이터를 기반으로 투자 전략의 성과를 테스트합니다.")
 

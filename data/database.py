@@ -223,10 +223,34 @@ def init_db():
             role TEXT NOT NULL,
             plan TEXT NOT NULL,
             session_timeout INTEGER NOT NULL DEFAULT 86400,
+            device_info TEXT NOT NULL DEFAULT '',
+            user_agent TEXT NOT NULL DEFAULT '',
+            ip_addr TEXT NOT NULL DEFAULT '',
+            last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             expires_at TEXT NOT NULL
         )
     """)
+
+    try:
+        cursor.execute("ALTER TABLE session_tokens ADD COLUMN device_info TEXT NOT NULL DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE session_tokens ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE session_tokens ADD COLUMN ip_addr TEXT NOT NULL DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE session_tokens ADD COLUMN last_seen TEXT NOT NULL DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    cursor.execute(
+        "UPDATE session_tokens SET last_seen = COALESCE(NULLIF(last_seen, ''), created_at)"
+    )
 
     try:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_tokens_token ON session_tokens(token)")
@@ -311,6 +335,19 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_error_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+            username TEXT,
+            page TEXT,
+            error_type TEXT,
+            error_code TEXT,
+            message TEXT,
+            stack_trace TEXT
+        )
+    """)
+
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_settings_user ON user_settings(username)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history(username, chat_type)")
@@ -326,6 +363,9 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_mkt_logs_user ON marketing_automation_logs(username, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_inquiries_status ON customer_inquiries(status, created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_inquiries_user ON customer_inquiries(username, created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_app_error_logs_ts ON app_error_logs(timestamp)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_app_error_logs_page ON app_error_logs(page)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_app_error_logs_code ON app_error_logs(error_code)")
 
     conn.commit()
     conn.close()
@@ -449,6 +489,122 @@ def get_all_activity_logs(limit: int = 100) -> pd.DataFrame:
     )
     conn.close()
     return df
+
+
+def log_app_error(
+    username: str,
+    page: str,
+    error_type: str,
+    error_code: str,
+    message: str,
+    stack_trace: str = "",
+):
+    init_db()
+    conn = None
+    try:
+        conn = get_connection()
+        conn.execute(
+            """
+            INSERT INTO app_error_logs (timestamp, username, page, error_type, error_code, message, stack_trace)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                (username or "unknown").strip() or "unknown",
+                (page or "unknown").strip() or "unknown",
+                (error_type or "unknown").strip() or "unknown",
+                (error_code or "UNKNOWN").strip() or "UNKNOWN",
+                str(message or "")[:2000],
+                str(stack_trace or "")[:10000],
+            ),
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_error_dashboard_data(hours: int = 24) -> dict[str, object]:
+    init_db()
+    lookback_hours = max(1, int(hours))
+    cutoff = (datetime.now() - timedelta(hours=lookback_hours)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_connection()
+    try:
+        summary_row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total_errors,
+                COALESCE(
+                    (
+                        SELECT error_code
+                        FROM app_error_logs
+                        WHERE timestamp >= ? AND COALESCE(error_code, '') != ''
+                        GROUP BY error_code
+                        ORDER BY COUNT(*) DESC, error_code ASC
+                        LIMIT 1
+                    ),
+                    '-'
+                ) AS top_error_code,
+                COALESCE(
+                    (
+                        SELECT page
+                        FROM app_error_logs
+                        WHERE timestamp >= ? AND COALESCE(page, '') != ''
+                        GROUP BY page
+                        ORDER BY COUNT(*) DESC, page ASC
+                        LIMIT 1
+                    ),
+                    '-'
+                ) AS top_error_page
+            FROM app_error_logs
+            WHERE timestamp >= ?
+            """,
+            (cutoff, cutoff, cutoff),
+        ).fetchone()
+
+        recent_errors = pd.read_sql_query(
+            """
+            SELECT timestamp, username, page, error_code, message
+            FROM app_error_logs
+            ORDER BY id DESC
+            LIMIT 20
+            """,
+            conn,
+        )
+
+        page_frequency = pd.read_sql_query(
+            """
+            SELECT page, COUNT(*) AS error_count
+            FROM app_error_logs
+            WHERE timestamp >= ?
+            GROUP BY page
+            ORDER BY error_count DESC, page ASC
+            """,
+            conn,
+            params=[cutoff],
+        )
+
+        return {
+            "hours": lookback_hours,
+            "total_errors": int(summary_row["total_errors"] if summary_row else 0),
+            "top_error_code": str(summary_row["top_error_code"] if summary_row else "-"),
+            "top_error_page": str(summary_row["top_error_page"] if summary_row else "-"),
+            "recent_errors": recent_errors,
+            "page_frequency": page_frequency,
+        }
+    except Exception:
+        return {
+            "hours": lookback_hours,
+            "total_errors": 0,
+            "top_error_code": "-",
+            "top_error_page": "-",
+            "recent_errors": pd.DataFrame(columns=["timestamp", "username", "page", "error_code", "message"]),
+            "page_frequency": pd.DataFrame(columns=["page", "error_count"]),
+        }
+    finally:
+        conn.close()
 
 
 def _create_referral_code() -> str:
@@ -1061,14 +1217,34 @@ def create_session_token(
             )
     conn.execute(
         """
-        INSERT INTO session_tokens (token, username, user_id, role, plan, session_timeout, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO session_tokens (
+            token, username, user_id, role, plan, session_timeout,
+            device_info, user_agent, ip_addr, last_seen, expires_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, '', '', '', ?, ?)
         """,
-        (token, username, user_id, role, plan, session_timeout, expires.isoformat()),
+        (token, username, user_id, role, plan, session_timeout, now_iso, expires.isoformat()),
     )
     conn.commit()
     conn.close()
     return token
+
+
+def update_session_device_info(token: str, device_info: str, user_agent: str, ip_addr: str):
+    if not token:
+        return
+    init_db()
+    conn = get_connection()
+    conn.execute(
+        """
+        UPDATE session_tokens
+        SET device_info = ?, user_agent = ?, ip_addr = ?, last_seen = ?
+        WHERE token = ?
+        """,
+        (device_info or "", user_agent or "", ip_addr or "", datetime.now().isoformat(), token),
+    )
+    conn.commit()
+    conn.close()
 
 
 def validate_session_token(token: str) -> Optional[dict[str, object]]:
@@ -1104,6 +1280,62 @@ def delete_session_token(token: str):
     init_db()
     conn = get_connection()
     conn.execute("DELETE FROM session_tokens WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
+
+
+def get_active_sessions(username: str) -> list[dict[str, object]]:
+    init_db()
+    now_iso = datetime.now().isoformat()
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT token, username, role, plan, device_info, user_agent, ip_addr,
+               created_at, last_seen, expires_at
+        FROM session_tokens
+        WHERE username = ? AND expires_at >= ?
+        ORDER BY datetime(last_seen) DESC, datetime(created_at) DESC, id DESC
+        """,
+        (username, now_iso),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def force_logout_session(token: str) -> bool:
+    if not token:
+        return False
+    init_db()
+    conn = get_connection()
+    cursor = conn.execute("DELETE FROM session_tokens WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
+    return cursor.rowcount > 0
+
+
+def touch_session(token: str):
+    if not token:
+        return
+    init_db()
+    now = datetime.now()
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT session_timeout FROM session_tokens WHERE token = ?",
+        (token,),
+    ).fetchone()
+    if row is None:
+        conn.close()
+        return
+
+    timeout = int(row["session_timeout"])
+    if timeout > 0:
+        expires_at = (now + timedelta(seconds=timeout)).isoformat()
+    else:
+        expires_at = (now + timedelta(days=365 * 10)).isoformat()
+    conn.execute(
+        "UPDATE session_tokens SET last_seen = ?, expires_at = ? WHERE token = ?",
+        (now.isoformat(), expires_at, token),
+    )
     conn.commit()
     conn.close()
 
@@ -1218,9 +1450,24 @@ def add_autopilot_log(username: str, slot_idx: int, log_type: str, message: str)
     conn.close()
 
 
-def get_autopilot_logs(username: str, slot_idx: int, limit: int = 50) -> list[str]:
+def get_autopilot_logs(username: str, slot_idx: Optional[int] = None, limit: int = 100):
     init_db()
     conn = get_connection()
+    if slot_idx is None:
+        df = pd.read_sql_query(
+            """
+            SELECT username, slot_idx, log_type, message, created_at
+            FROM autopilot_logs
+            WHERE username=?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            conn,
+            params=[username, limit],
+        )
+        conn.close()
+        return df
+
     rows = conn.execute(
         "SELECT message FROM autopilot_logs WHERE username=? AND slot_idx=? ORDER BY id DESC LIMIT ?",
         (username, slot_idx, limit),

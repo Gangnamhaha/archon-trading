@@ -1,15 +1,66 @@
 """
 한국투자증권 KIS Open API 연동 모듈
 - 인증, 현재가 조회, 주문, 잔고 조회
+- 주문 안전장치: 장중/장외 자동판별, 사전검증, 실패 재시도
 """
 import requests
 import json
 import re
-from typing import Mapping
+import time
+import traceback
+from datetime import datetime, timedelta
+from typing import Mapping, Optional
 from config.settings import (
     KIS_APP_KEY, KIS_APP_SECRET, KIS_ACCOUNT_NO,
     KIS_ACCOUNT_PRODUCT_CODE, KIS_BASE_URL, TRADING_MODE
 )
+from data.database import log_app_error
+
+_MARKET_OPEN_H, _MARKET_OPEN_M = 9, 0
+_MARKET_CLOSE_H, _MARKET_CLOSE_M = 15, 30
+
+_RETRYABLE_MSG_CDS: set[str] = {
+    "IGW00003", "IGW00121", "APBK0000",
+}
+
+_NON_RETRYABLE_MSG_CDS: set[str] = {
+    "APBK0918", "APBK0400", "IGW00017", "APBK0630", "APBK0631",
+}
+
+_MAX_RETRIES = 2
+_RETRY_DELAY_SEC = 0.8
+
+
+def is_market_open() -> bool:
+    """현재 국내 주식시장 정규장 시간인지 판별 (KST 기준)"""
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
+    except Exception:
+        now = datetime.utcnow() + timedelta(hours=9)
+    wd = now.weekday()
+    if wd >= 5:  # 토/일
+        return False
+    t = now.hour * 60 + now.minute
+    return (_MARKET_OPEN_H * 60 + _MARKET_OPEN_M) <= t < (_MARKET_CLOSE_H * 60 + _MARKET_CLOSE_M)
+
+
+def market_status_text() -> str:
+    """현재 장 상태를 한 줄 텍스트로 반환"""
+    if is_market_open():
+        return "🟢 정규장 운영 중"
+    try:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
+    except Exception:
+        now = datetime.utcnow() + timedelta(hours=9)
+    wd = now.weekday()
+    if wd >= 5:
+        return "🔴 주말 휴장"
+    h = now.hour
+    if h < _MARKET_OPEN_H:
+        return "🟡 장전 (09:00 개장)"
+    return "🔴 장 마감 (15:30 종료)"
 
 
 class KISApi:
@@ -138,91 +189,69 @@ class KISApi:
         except Exception as e:
             return {"error": str(e)}
 
-    def buy_order(self, ticker: str, quantity: int, price: int = 0) -> dict[str, object]:
-        """매수 주문"""
-        if not self._is_configured():
-            return {"error": "API 키 미설정"}
+    def _validate_order_preconditions(
+        self, ticker: str, quantity: int, side: str,
+    ) -> Optional[dict[str, object]]:
+        tr_id = ("TTTC0802U" if side == "buy" else "TTTC0801U") if self.is_live else (
+            "VTTC0802U" if side == "buy" else "VTTC0801U"
+        )
+        mode = "실전" if self.is_live else "모의투자"
 
-        tr_id = "TTTC0802U" if self.is_live else "VTTC0802U"
         norm_ticker = self._normalize_domestic_ticker(ticker)
         if not (norm_ticker.isdigit() and len(norm_ticker) == 6):
             return {
                 "status": "fail",
                 "error": "종목코드는 국내주식 6자리 숫자여야 합니다. 예: 005930",
-                "msg_cd": "INVALID_PDNO_LOCAL",
-                "tr_id": tr_id,
-                "mode": "실전" if self.is_live else "모의투자",
+                "msg_cd": "INVALID_PDNO_LOCAL", "tr_id": tr_id, "mode": mode,
             }
-
-        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
-        # 모의투자: VTTC0802U, 실전: TTTC0802U
-
-        cano, acnt_prdt_cd = self._account_parts()
-
-        body = {
-            "CANO": cano,
-            "ACNT_PRDT_CD": acnt_prdt_cd,
-            "PDNO": norm_ticker,
-            "ORD_DVSN": "00" if price > 0 else "01",  # 00: 지정가, 01: 시장가
-            "ORD_QTY": str(quantity),
-            "ORD_UNPR": str(price if price > 0 else 0),
-        }
-
-        headers = self._get_headers(tr_id)
-        headers["custtype"] = "P"
-        hashkey = self._get_hashkey(body)
-        if hashkey:
-            headers["hashkey"] = hashkey
-
-        try:
-            res = requests.post(url, headers=headers, data=json.dumps(body), timeout=10)
-            data = res.json()
-            if not res.ok:
-                return {
-                    "status": "fail",
-                    "error": data.get("msg1") or f"HTTP {res.status_code}",
-                    "msg_cd": data.get("msg_cd", ""),
-                    "rt_cd": data.get("rt_cd", ""),
-                    "tr_id": tr_id,
-                    "mode": "실전" if self.is_live else "모의투자",
-                }
-            if data.get("rt_cd") == "0":
-                return {
-                    "status": "success",
-                    "주문번호": data.get("output", {}).get("ODNO", ""),
-                    "message": "매수 주문 완료",
-                }
+        if quantity <= 0:
             return {
                 "status": "fail",
-                "error": data.get("msg1", "주문 실패"),
-                "msg_cd": data.get("msg_cd", ""),
-                "rt_cd": data.get("rt_cd", ""),
-                "tr_id": tr_id,
-                "mode": "실전" if self.is_live else "모의투자",
+                "error": f"주문 수량은 1 이상이어야 합니다. (입력: {quantity})",
+                "msg_cd": "INVALID_QTY_LOCAL", "tr_id": tr_id, "mode": mode,
             }
-        except Exception as e:
-            return {"status": "fail", "error": str(e)}
-
-    def sell_order(self, ticker: str, quantity: int, price: int = 0) -> dict[str, object]:
-        """매도 주문"""
-        if not self._is_configured():
-            return {"error": "API 키 미설정"}
-
-        tr_id = "TTTC0801U" if self.is_live else "VTTC0801U"
-        norm_ticker = self._normalize_domestic_ticker(ticker)
-        if not (norm_ticker.isdigit() and len(norm_ticker) == 6):
+        if not is_market_open():
             return {
                 "status": "fail",
-                "error": "종목코드는 국내주식 6자리 숫자여야 합니다. 예: 005930",
-                "msg_cd": "INVALID_PDNO_LOCAL",
-                "tr_id": tr_id,
-                "mode": "실전" if self.is_live else "모의투자",
+                "error": f"현재 장 운영시간이 아닙니다. ({market_status_text()})",
+                "msg_cd": "MARKET_CLOSED_LOCAL", "tr_id": tr_id, "mode": mode,
             }
+        return None
 
+    def _execute_order_with_retry(
+        self, tr_id: str, norm_ticker: str, quantity: int, price: int, label: str,
+    ) -> dict[str, object]:
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/order-cash"
-        # 모의투자: VTTC0801U, 실전: TTTC0801U
-
         cano, acnt_prdt_cd = self._account_parts()
+        mode = "실전" if self.is_live else "모의투자"
+
+        def _safe_log_final_failure(result: dict[str, object], stack_trace: str = ""):
+            try:
+                username = "unknown"
+                try:
+                    import streamlit as st
+
+                    session_user = st.session_state.get("user", {})
+                    username = str(session_user.get("username", "unknown") or "unknown")
+                except Exception:
+                    pass
+
+                error_code = str(result.get("msg_cd") or result.get("rt_cd") or "ORDER_FAILED")
+                error_message = str(result.get("error") or "주문 처리 실패")
+                detail = (
+                    f"{label} 주문 실패 | ticker={norm_ticker}, qty={quantity}, price={price}, "
+                    f"tr_id={tr_id}, mode={mode}, error={error_message}"
+                )
+                log_app_error(
+                    username=username,
+                    page="자동매매",
+                    error_type="KIS_ORDER_FINAL_FAILURE",
+                    error_code=error_code,
+                    message=detail,
+                    stack_trace=stack_trace,
+                )
+            except Exception:
+                pass
 
         body = {
             "CANO": cano,
@@ -239,34 +268,78 @@ class KISApi:
         if hashkey:
             headers["hashkey"] = hashkey
 
-        try:
-            res = requests.post(url, headers=headers, data=json.dumps(body), timeout=10)
-            data = res.json()
-            if not res.ok:
-                return {
+        last_result: dict[str, object] = {}
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                res = requests.post(url, headers=headers, data=json.dumps(body), timeout=10)
+                data = res.json()
+                msg_cd = str(data.get("msg_cd", ""))
+
+                if res.ok and data.get("rt_cd") == "0":
+                    return {
+                        "status": "success",
+                        "주문번호": data.get("output", {}).get("ODNO", ""),
+                        "message": f"{label} 주문 완료",
+                    }
+
+                last_result = {
                     "status": "fail",
                     "error": data.get("msg1") or f"HTTP {res.status_code}",
-                    "msg_cd": data.get("msg_cd", ""),
+                    "msg_cd": msg_cd,
                     "rt_cd": data.get("rt_cd", ""),
                     "tr_id": tr_id,
-                    "mode": "실전" if self.is_live else "모의투자",
+                    "mode": mode,
                 }
-            if data.get("rt_cd") == "0":
-                return {
-                    "status": "success",
-                    "주문번호": data.get("output", {}).get("ODNO", ""),
-                    "message": "매도 주문 완료",
+
+                if msg_cd in _NON_RETRYABLE_MSG_CDS:
+                    _safe_log_final_failure(last_result)
+                    return last_result
+                if msg_cd in _RETRYABLE_MSG_CDS and attempt < _MAX_RETRIES:
+                    time.sleep(_RETRY_DELAY_SEC)
+                    continue
+                _safe_log_final_failure(last_result)
+                return last_result
+            except requests.exceptions.Timeout:
+                last_result = {"status": "fail", "error": "요청 시간 초과", "tr_id": tr_id, "mode": mode}
+                if attempt < _MAX_RETRIES:
+                    time.sleep(_RETRY_DELAY_SEC)
+                    continue
+            except Exception as e:
+                failed: dict[str, object] = {
+                    "status": "fail",
+                    "error": str(e),
+                    "tr_id": tr_id,
+                    "mode": mode,
+                    "attempt": attempt,
                 }
-            return {
-                "status": "fail",
-                "error": data.get("msg1", "주문 실패"),
-                "msg_cd": data.get("msg_cd", ""),
-                "rt_cd": data.get("rt_cd", ""),
-                "tr_id": tr_id,
-                "mode": "실전" if self.is_live else "모의투자",
-            }
-        except Exception as e:
-            return {"status": "fail", "error": str(e)}
+                _safe_log_final_failure(failed, traceback.format_exc())
+                return failed
+        _safe_log_final_failure(last_result)
+        return last_result
+
+    def buy_order(self, ticker: str, quantity: int, price: int = 0) -> dict[str, object]:
+        if not self._is_configured():
+            return {"error": "API 키 미설정"}
+
+        pre = self._validate_order_preconditions(ticker, quantity, "buy")
+        if pre is not None:
+            return pre
+
+        tr_id = "TTTC0802U" if self.is_live else "VTTC0802U"
+        norm_ticker = self._normalize_domestic_ticker(ticker)
+        return self._execute_order_with_retry(tr_id, norm_ticker, quantity, price, "매수")
+
+    def sell_order(self, ticker: str, quantity: int, price: int = 0) -> dict[str, object]:
+        if not self._is_configured():
+            return {"error": "API 키 미설정"}
+
+        pre = self._validate_order_preconditions(ticker, quantity, "sell")
+        if pre is not None:
+            return pre
+
+        tr_id = "TTTC0801U" if self.is_live else "VTTC0801U"
+        norm_ticker = self._normalize_domestic_ticker(ticker)
+        return self._execute_order_with_retry(tr_id, norm_ticker, quantity, price, "매도")
 
     def get_balance(self) -> dict[str, object]:
         if not self._is_configured():
