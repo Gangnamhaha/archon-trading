@@ -4,21 +4,35 @@
 - 모바일 화면 잠금 / 브라우저 탭 전환에도 계속 동작
 """
 import json
+import importlib
 import threading
-import time
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Any
 
 _ENGINE_LOCK = threading.Lock()
 _RUNNING_THREADS: dict[str, threading.Thread] = {}
 _STOP_FLAGS: dict[str, threading.Event] = {}
 
 
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
 def _engine_key(username: str, slot_idx: int) -> str:
     return f"{username}::{slot_idx}"
 
 
-def _run_slot(username: str, slot_idx: int, stop_event: threading.Event):
+def _run_slot(username: str, slot_idx: int, stop_event: threading.Event) -> None:
     from data.database import (
         get_autopilot_jobs,
         update_autopilot_job_state,
@@ -27,37 +41,40 @@ def _run_slot(username: str, slot_idx: int, stop_event: threading.Event):
         stop_autopilot_job,
     )
 
-    log = lambda msg, t="info": add_autopilot_log(username, slot_idx, t, msg)
+    def log(msg: str, level: str = "info") -> None:
+        add_autopilot_log(username, slot_idx, level, msg)
+
     log(f"🚀 AP-{slot_idx+1} 백그라운드 엔진 시작 ({datetime.now().strftime('%H:%M:%S')})")
 
     while not stop_event.is_set():
         try:
             jobs = get_autopilot_jobs(username)
-            job = next((j for j in jobs if int(j["slot_idx"]) == slot_idx), None)
+            job = next((j for j in jobs if _to_int(j["slot_idx"]) == slot_idx), None)
             if not job or str(job["status"]) != "running":
                 log(f"AP-{slot_idx+1} 작업이 중지됐습니다.")
                 break
 
             market = str(job["market"])
             mode = str(job["mode"])
-            capital = int(job["capital"])
-            max_stocks = int(job["max_stocks"])
-            max_per = int(job["max_per"])
-            sl = float(job["stop_loss"])
-            tp = float(job["take_profit"])
-            daily_limit = float(job["daily_limit"])
-            usdkrw = float(job["usdkrw"]) if float(job["usdkrw"]) > 0 else 1350.0
+            capital = _to_int(job["capital"])
+            max_stocks = _to_int(job["max_stocks"])
+            max_per = _to_int(job["max_per"])
+            sl = _to_float(job["stop_loss"])
+            tp = _to_float(job["take_profit"])
+            daily_limit = _to_float(job["daily_limit"])
+            usdkrw_val = _to_float(job["usdkrw"])
+            usdkrw = usdkrw_val if usdkrw_val > 0 else 1350.0
             is_us = market == "US"
             capital_base = float(capital) / usdkrw if is_us else float(capital)
             market_code = "US" if is_us else "KR"
 
             try:
-                holdings: dict = json.loads(str(job["holdings"]) or "{}")
+                holdings: dict[str, dict[str, Any]] = json.loads(str(job["holdings"]) or "{}")
             except Exception:
                 holdings = {}
 
-            daily_pnl = float(job["daily_pnl"])
-            run_count = int(job["run_count"]) + 1
+            daily_pnl = _to_float(job["daily_pnl"])
+            run_count = _to_int(job["run_count"]) + 1
 
             log(f"[{datetime.now().strftime('%H:%M:%S')}] AP-{slot_idx+1} 스캔 #{run_count} 시작 | {market} | {mode}")
 
@@ -65,25 +82,20 @@ def _run_slot(username: str, slot_idx: int, stop_event: threading.Event):
                 try:
                     import sys, os
                     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                    from pages.util_ap_us import recommend_us
+                    recommend_us = importlib.import_module("pages.util_ap_us").recommend_us
                     sdf = recommend_us(mode=mode, max_stocks=max_stocks)
-                    score_col = "공격점수" if "공격" in mode else "종합점수"
                 except ImportError:
                     sdf = None
-                    score_col = "종합점수"
             else:
                 try:
                     if "공격" in mode:
                         from analysis.recommender import recommend_aggressive_stocks
                         sdf = recommend_aggressive_stocks(market=market, top_n=100, result_count=max_stocks)
-                        score_col = "공격점수"
                     else:
                         from analysis.recommender import recommend_stocks
                         sdf = recommend_stocks(market=market, top_n=50, result_count=max_stocks)
-                        score_col = "종합점수"
                 except Exception as e:
                     sdf = None
-                    score_col = "종합점수"
                     log(f"스캔 실패: {e}", "error")
 
             if sdf is not None and not sdf.empty:
@@ -123,8 +135,7 @@ def _run_slot(username: str, slot_idx: int, stop_event: threading.Event):
                     log(f"AP-{slot_idx+1} 일일 손실 한도 도달 → 자동 중지", "error")
                     break
 
-            next_run = (datetime.now().replace(microsecond=0).isoformat()[:-1] + "Z") if False else \
-                (datetime.now().__class__.now() + __import__("datetime").timedelta(seconds=300)).isoformat()
+            next_run = (datetime.now() + timedelta(seconds=300)).isoformat()
 
             update_autopilot_job_state(
                 username=username,
@@ -150,7 +161,7 @@ def _run_slot(username: str, slot_idx: int, stop_event: threading.Event):
         pass
 
 
-def start_background_autopilot(username: str, slot_idx: int, **kwargs) -> bool:
+def start_background_autopilot(username: str, slot_idx: int, **kwargs: Any) -> bool:
     """백그라운드 스레드로 오토파일럿 시작. 이미 실행 중이면 False 반환."""
     key = _engine_key(username, slot_idx)
     with _ENGINE_LOCK:
@@ -192,7 +203,9 @@ def stop_all_background_autopilots(username: str) -> None:
             flag.set()
     from data.database import get_autopilot_jobs, stop_autopilot_job
     for job in get_autopilot_jobs(username):
-        stop_autopilot_job(username, int(job["slot_idx"]))
+        raw_slot = job.get("slot_idx")
+        if isinstance(raw_slot, (int, float, str)):
+            stop_autopilot_job(username, int(raw_slot))
 
 
 def is_running(username: str, slot_idx: int) -> bool:
