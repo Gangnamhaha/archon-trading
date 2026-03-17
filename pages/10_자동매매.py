@@ -545,14 +545,41 @@ if api:
     st.caption("AI가 종목 추천 → 자동 선택 → 포지션 사이징 → 매수/매도를 모두 자동 수행합니다.")
 
     _MAX_AP = 5
+    _ap_ui_prefs = load_user_preferences(username, "autopilot_ui")
     if "ap_slot_count" not in st.session_state:
-        st.session_state["ap_slot_count"] = 1
+        try:
+            _saved_slots = int(_ap_ui_prefs.get("slot_count", 1))
+        except Exception:
+            _saved_slots = 1
+        st.session_state["ap_slot_count"] = max(1, min(_MAX_AP, _saved_slots))
+
+    def _persist_ap_slots() -> None:
+        save_user_preferences(
+            username,
+            "autopilot_ui",
+            {"slot_count": int(st.session_state.get("ap_slot_count", 1))},
+        )
 
     ap_add_col, ap_info_col = st.columns([1, 3])
     with ap_add_col:
         if st.button("➕ 슬롯 추가", use_container_width=True, key="ap_add_slot"):
             if st.session_state["ap_slot_count"] < _MAX_AP:
                 st.session_state["ap_slot_count"] += 1
+                _new_idx = st.session_state["ap_slot_count"] - 1
+                _np = f"ap{_new_idx}_"
+                st.session_state.setdefault(f"{_np}running", False)
+                st.session_state.setdefault(f"{_np}holdings", {})
+                st.session_state.setdefault(f"{_np}capital", 1_000_000)
+                st.session_state.setdefault(f"{_np}market", "KOSPI")
+                st.session_state.setdefault(f"{_np}mode", "일반 추천")
+                st.session_state.setdefault(f"{_np}max_stocks", 5)
+                st.session_state.setdefault(f"{_np}max_per", 20)
+                st.session_state.setdefault(f"{_np}sl", 5)
+                st.session_state.setdefault(f"{_np}tp", 15)
+                st.session_state.setdefault(f"{_np}daily_limit", 5)
+                st.session_state.setdefault(f"{_np}usdkrw", 1350.0)
+                _persist_ap_slots()
+                st.toast(f"AP-{_new_idx + 1} 슬롯이 추가되었습니다.")
                 st.rerun()
             else:
                 st.toast(f"최대 {_MAX_AP}개까지 가능합니다.")
