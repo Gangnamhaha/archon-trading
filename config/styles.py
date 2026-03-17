@@ -165,6 +165,11 @@ input,select,textarea{font-size:16px !important}
 [data-testid="manage-app-button"]{position:fixed !important;right:0.75rem !important;bottom:calc(var(--archon-mobile-nav-height) + 0.9rem) !important;z-index:2147483646 !important}
 .stDeployButton{position:fixed !important;right:0.75rem !important;bottom:calc(var(--archon-mobile-nav-height) + 4.9rem) !important;z-index:2147483646 !important}
 iframe[title="streamlitApp"] ~ * [data-testid="manage-app-button"]{bottom:calc(var(--archon-mobile-nav-height) + 0.9rem) !important}
+@media(max-width:560px){
+[data-testid="manage-app-button"]{top:0.8rem !important;bottom:auto !important;right:0.6rem !important}
+.stDeployButton{top:4.3rem !important;bottom:auto !important;right:0.6rem !important}
+iframe[title="streamlitApp"] ~ * [data-testid="manage-app-button"]{top:0.8rem !important;bottom:auto !important}
+}
 body.archon-sidebar-open .mobile-bottom-nav{opacity:0.22 !important;pointer-events:none !important}
 body.archon-sidebar-open [data-testid="manage-app-button"],
 body.archon-sidebar-open .stDeployButton{opacity:0 !important;pointer-events:none !important}
@@ -451,6 +456,20 @@ function archonNav(path) {
         var sidebar = document.querySelector('[data-testid="stSidebar"]');
         var opened = !!(sidebar && sidebar.getAttribute('aria-expanded') === 'true');
         document.body.classList.toggle('archon-sidebar-open', opened);
+
+        var isMobile = window.matchMedia('(max-width: 768px)').matches;
+        var manageBtn = document.querySelector('[data-testid="manage-app-button"]');
+        var deployBtn = document.querySelector('.stDeployButton');
+        var hideFloating = isMobile && opened;
+
+        if (manageBtn) {
+            manageBtn.style.opacity = hideFloating ? '0' : '1';
+            manageBtn.style.pointerEvents = hideFloating ? 'none' : 'auto';
+        }
+        if (deployBtn) {
+            deployBtn.style.opacity = hideFloating ? '0' : '1';
+            deployBtn.style.pointerEvents = hideFloating ? 'none' : 'auto';
+        }
     }
 
     function bindObserver() {
