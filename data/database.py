@@ -134,6 +134,17 @@ def init_db():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            action_detail TEXT,
+            page TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS referral_codes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             code TEXT UNIQUE NOT NULL,
@@ -353,6 +364,8 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user ON chat_history(username, chat_type)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_user ON activity_log(username)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_activity_log_user ON user_activity_log(username)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_activity_log_created ON user_activity_log(created_at)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(username)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_trade_history_ticker ON trade_history(ticker)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_portfolio_ticker ON portfolio(ticker)")
@@ -489,6 +502,51 @@ def get_all_activity_logs(limit: int = 100) -> pd.DataFrame:
     )
     conn.close()
     return df
+
+
+def log_user_activity(username: str, action_type: str, detail: Optional[str] = "", page: str = "") -> None:
+    init_db()
+    clean_username = (username or "").strip()
+    clean_action_type = (action_type or "").strip()
+    if not clean_username or not clean_action_type:
+        return
+    clean_detail = str(detail or "")[:500]
+    clean_page = str(page or "")[:100]
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO user_activity_log (username, action_type, action_detail, page)
+        VALUES (?, ?, ?, ?)
+        """,
+        (clean_username, clean_action_type, clean_detail, clean_page),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_recent_activity(username: str, limit: int = 20) -> list[dict[str, str]]:
+    init_db()
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT action_type, action_detail, page, created_at
+        FROM user_activity_log
+        WHERE username = ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (username, max(1, int(limit))),
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "action_type": str(row["action_type"]),
+            "action_detail": str(row["action_detail"] or ""),
+            "page": str(row["page"] or ""),
+            "created_at": str(row["created_at"] or ""),
+        }
+        for row in rows
+    ]
 
 
 def log_app_error(

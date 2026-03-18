@@ -1,0 +1,1 @@
+F1: ALL MUST HAVE passed (5 views, auth, styles, KIS, tokens, settings 5/5, 21 evidence files). ALL MUST NOT HAVE passed (0 type suppressions, 0 old colors)

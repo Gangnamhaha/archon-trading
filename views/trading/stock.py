@@ -6,7 +6,7 @@ import streamlit as st
 
 from config.auth import is_paid, is_pro, require_auth
 from config.styles import inject_pro_css, load_user_preferences, save_user_preferences, show_legal_disclaimer
-from data.database import add_trade, get_autopilot_jobs, get_autopilot_logs
+from data.database import add_trade, get_autopilot_jobs, get_autopilot_logs, log_user_activity
 from trading.autopilot_engine import is_running, start_background_autopilot, stop_background_autopilot
 from trading.kis_api import KISApi, market_status_text
 from trading.kiwoom_api import KiwoomApi
@@ -32,6 +32,41 @@ def _init_defaults(username: str) -> None:
     for key, value in defaults.items():
         st.session_state.setdefault(key, saved.get(key, value))
 
+    saved_trade = load_user_preferences(username, "trading_stock")
+    st.session_state.setdefault("stock_broker_code", str(saved_trade.get("last_selected_broker", "KIS") or "KIS"))
+    st.session_state.setdefault("stock_trading_mode", str(saved_trade.get("trading_mode", "모의투자") or "모의투자"))
+    st.session_state.setdefault("stock_last_ticker", str(saved_trade.get("last_used_ticker", "005930") or "005930"))
+    st.session_state.setdefault("stock_buy_ticker", st.session_state["stock_last_ticker"])
+    st.session_state.setdefault("stock_sell_ticker", st.session_state["stock_last_ticker"])
+    st.session_state.setdefault(
+        "_stock_pref_last",
+        (
+            st.session_state["stock_broker_code"],
+            st.session_state["stock_trading_mode"],
+            st.session_state["stock_last_ticker"],
+        ),
+    )
+
+
+def _save_stock_preferences(username: str, log_change: bool = False) -> None:
+    settings = {
+        "last_selected_broker": str(st.session_state.get("stock_broker_code") or "KIS"),
+        "trading_mode": str(st.session_state.get("stock_trading_mode") or "모의투자"),
+        "last_used_ticker": str(st.session_state.get("stock_last_ticker") or ""),
+    }
+    current = (
+        settings["last_selected_broker"],
+        settings["trading_mode"],
+        settings["last_used_ticker"],
+    )
+    previous = st.session_state.get("_stock_pref_last")
+    if previous == current:
+        return
+    save_user_preferences(username, "trading_stock", settings)
+    if log_change:
+        log_user_activity(username, "settings_changed", "국내주식 매매 설정 변경", "매매(국내주식)")
+    st.session_state["_stock_pref_last"] = current
+
 
 def _render_broker_connect(username: str) -> None:
     st.subheader("증권사 API 연결")
@@ -43,8 +78,12 @@ def _render_broker_connect(username: str) -> None:
 
     brokers = {"한국투자증권 (KIS)": "KIS", "키움증권": "KIWOOM"}
     labels = list(brokers.keys())
-    broker_label = str(st.selectbox("증권사 선택", labels) or labels[0])
+    selected_code = str(st.session_state.get("stock_broker_code") or "KIS")
+    default_label = next((label for label, code in brokers.items() if code == selected_code), labels[0])
+    st.session_state.setdefault("stock_broker_label", default_label)
+    broker_label = str(st.selectbox("증권사 선택", labels, key="stock_broker_label") or labels[0])
     broker_code = brokers[broker_label]
+    st.session_state["stock_broker_code"] = broker_code
     modes = ["모의투자", "실전투자"]
 
     col1, col2 = st.columns(2)
@@ -53,7 +92,9 @@ def _render_broker_connect(username: str) -> None:
         account_no = st.text_input("계좌번호", key="broker_account")
     with col2:
         app_secret = st.text_input("Secret Key" if broker_code == "KIWOOM" else "App Secret", type="password", key="broker_secret")
-        mode = st.selectbox("거래 모드", modes)
+        mode = str(st.selectbox("거래 모드", modes, key="stock_trading_mode") or "모의투자")
+
+    _save_stock_preferences(username, log_change=True)
 
     if mode == "모의투자":
         base_url = "https://openapivts.koreainvestment.com:29443" if broker_code == "KIS" else "https://mockapi.kiwoom.com"
@@ -99,6 +140,9 @@ def _render_manual_order() -> None:
     st.caption(market_status_text())
 
     if st.button("💰 잔고 조회", use_container_width=True, key="btn_balance"):
+        username = str(st.session_state.get("user", {}).get("username") or "")
+        if username:
+            log_user_activity(username, "balance_checked", "", "매매(국내주식)")
         with st.spinner("잔고 조회 중..."):
             bal = api.get_balance()
         if "error" in bal:
@@ -134,6 +178,13 @@ def _render_manual_order() -> None:
         if result.get("status") == "success":
             add_trade(ticker, "KR", side, price, qty, "수동 주문")
             st.session_state["trade_log"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {side} {ticker} x{qty}")
+            st.session_state["stock_last_ticker"] = ticker
+            st.session_state["stock_buy_ticker"] = ticker
+            st.session_state["stock_sell_ticker"] = ticker
+            username = str(st.session_state.get("user", {}).get("username") or "")
+            if username:
+                _save_stock_preferences(username, log_change=True)
+                log_user_activity(username, "order_placed", f"{side} {ticker} x{qty}", "매매(국내주식)")
             st.success(f"{side} 주문 완료")
         else:
             st.error(str(result.get("error") or "주문 실패"))
@@ -190,6 +241,7 @@ def _render_autopilot(username: str) -> None:
     left, right = st.columns(2)
     with left:
         if not running and st.button("🚀 AP-1 시작", use_container_width=True, type="primary"):
+            log_user_activity(username, "autopilot_started", f"{market}/{mode}", "매매(국내주식)")
             start_background_autopilot(
                 username=username,
                 slot_idx=0,
@@ -206,6 +258,7 @@ def _render_autopilot(username: str) -> None:
             st.rerun()
     with right:
         if running and st.button("🛑 AP-1 중지", use_container_width=True, type="primary"):
+            log_user_activity(username, "autopilot_stopped", "AP-1", "매매(국내주식)")
             stop_background_autopilot(username, 0)
             st.rerun()
 
@@ -227,6 +280,11 @@ def _render_autopilot(username: str) -> None:
 def render_stock(user: dict[str, object]) -> None:
     _ = (require_auth, inject_pro_css, is_paid, is_pro)
     username = str(user["username"])
+    visit_key = f"_visit_logged_stock_{username}"
+    if not st.session_state.get(visit_key):
+        log_user_activity(username, "page_visit", "", "매매(국내주식)")
+        st.session_state[visit_key] = True
+
     _init_defaults(username)
 
     st.title("🤖 자동매매 봇")

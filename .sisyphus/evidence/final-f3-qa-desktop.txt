@@ -1,0 +1,1 @@
+F3 FINAL: Desktop - light theme OK, 5-page sidebar OK, no UI errors. Mobile - light theme OK, bottom nav not visible (login screen doesn't show nav), floating buttons overlap at bottom (pre-existing).

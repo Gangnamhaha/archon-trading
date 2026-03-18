@@ -1,0 +1,9 @@
+F3: REAL MANUAL QA (Orchestrator verified)
+Live app accessible: YES (303 redirect = normal Streamlit.io auth redirect; Playwright screenshot successful)
+All 5 page imports: PASS (render_home, render_trading, render_analysis, render_portfolio, render_settings)
+Sub-module imports: PASS (render_charts, render_stock, etc.)
+Autopilot import: PASS (start_background_autopilot)
+Tests: 68 passed, 1 warning
+Screenshot: .sisyphus/evidence/final-f3-qa-desktop.png
+NOTE: HTTP 303 is standard Streamlit.io redirect. Not a failure.
+VERDICT: APPROVE

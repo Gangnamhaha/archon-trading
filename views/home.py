@@ -1,8 +1,8 @@
 import streamlit as st
 
 from config.auth import is_paid, is_pro, logout, require_auth
-from config.styles import inject_pro_css
-from data.database import add_watchlist, get_watchlist, remove_watchlist
+from config.styles import inject_pro_css, load_user_preferences, save_user_preferences
+from data.database import add_watchlist, get_recent_activity, get_watchlist, log_user_activity, remove_watchlist
 
 
 @st.cache_data(ttl=300)
@@ -62,6 +62,23 @@ def _fetch_market_summary():
 
 def render_home():
     user = require_auth()
+    username = str(user["username"])
+    visit_key = f"_visit_logged_home_{username}"
+    if not st.session_state.get(visit_key):
+        log_user_activity(username, "page_visit", "", "홈")
+        st.session_state[visit_key] = True
+
+    saved_home = load_user_preferences(username, "home")
+    default_indices = ["KOSPI", "KOSDAQ", "S&P 500", "NASDAQ"]
+    saved_indices = saved_home.get("indices_order", default_indices)
+    if not isinstance(saved_indices, list):
+        saved_indices = default_indices
+    normalized_saved = [idx for idx in saved_indices if idx in default_indices] + [
+        idx for idx in default_indices if idx not in saved_indices
+    ]
+    st.session_state.setdefault("home_indices_order", normalized_saved)
+    st.session_state.setdefault("_home_pref_last", tuple(st.session_state["home_indices_order"]))
+
     inject_pro_css(show_logout=False)
     user_is_pro = is_pro(user)
     user_is_paid = is_paid(user)
@@ -82,9 +99,26 @@ def render_home():
         st.switch_page("views/trading/__init__.py")
 
     st.markdown("#### Market Overview")
+    picked_order = st.multiselect(
+        "지수 표시 순서",
+        default_indices,
+        default=st.session_state["home_indices_order"],
+        key="home_indices_order",
+    )
+    indices = [idx for idx in picked_order if idx in default_indices] + [
+        idx for idx in default_indices if idx not in picked_order
+    ]
+    if st.session_state["home_indices_order"] != indices:
+        st.session_state["home_indices_order"] = indices
+
+    current_pref = tuple(indices)
+    if current_pref != st.session_state.get("_home_pref_last"):
+        save_user_preferences(username, "home", {"indices_order": indices})
+        log_user_activity(username, "settings_changed", "시장 지수 표시 순서 변경", "홈")
+        st.session_state["_home_pref_last"] = current_pref
+
     if market_data:
         idx_cols = st.columns(4)
-        indices = ["KOSPI", "KOSDAQ", "S&P 500", "NASDAQ"]
         for col, idx_name in zip(idx_cols, indices):
             if idx_name in market_data:
                 data = market_data[idx_name]
@@ -126,6 +160,21 @@ def render_home():
     for col, (target_path, label) in zip(qa_cols, qa_items):
         if col.button(label, use_container_width=True):
             st.switch_page(target_path)
+
+    st.markdown("#### 최근 활동")
+    recent = get_recent_activity(username, limit=10)
+    if recent:
+        for item in recent:
+            stamp = str(item.get("created_at") or "")
+            action_type = str(item.get("action_type") or "")
+            page = str(item.get("page") or "-")
+            detail = str(item.get("action_detail") or "")
+            line = f"- `{stamp}` [{page}] {action_type}"
+            if detail:
+                line += f" - {detail}"
+            st.markdown(line)
+    else:
+        st.caption("아직 기록된 활동이 없습니다.")
 
     plan_badge = "💎 Pro" if user_plan == "pro" else ("✨ Plus" if user_plan == "plus" else "🆓 Free")
     st.sidebar.markdown(f"**{user['username']}** ({user['role']}) — {plan_badge}")

@@ -4,15 +4,23 @@ from typing import Any, cast
 import streamlit as st
 
 from config.auth import is_paid, is_pro, require_auth
-from config.styles import inject_pro_css, show_legal_disclaimer
-from data.database import add_trade, get_trades
+from config.styles import inject_pro_css, load_user_preferences, save_user_preferences, show_legal_disclaimer
+from data.database import add_trade, get_trades, log_user_activity
 from data.fetcher import FX_PAIRS, fetch_fx_pair, get_fx_spot_rate
 
 def render_fx(user: dict[str, object]) -> None:
     _ = (require_auth, inject_pro_css, is_paid)
+    username = str(user["username"])
     if not is_pro(user):
         st.warning("외환 자동매매는 Pro 플랜 전용입니다.")
         st.stop()
+
+    visit_key = f"_visit_logged_fx_{username}"
+    if not st.session_state.get(visit_key):
+        log_user_activity(username, "page_visit", "", "매매(외환)")
+        st.session_state[visit_key] = True
+
+    saved_fx = load_user_preferences(username, "trading_fx")
 
     st.title("💱 외환 자동매매 (FX Autopilot)")
     st.caption("주요 통화쌍의 기술적 지표 기반 시뮬레이션 자동매매 | 실제 브로커 API 연결 시 실거래 가능")
@@ -20,12 +28,12 @@ def render_fx(user: dict[str, object]) -> None:
     PAIR_LIST = list(FX_PAIRS.keys())
 
     AP_DEFAULTS = {
-        "fx_pair": "USD/KRW",
-        "fx_capital": 10_000_000,
+        "fx_pair": str(saved_fx.get("last_fx_pair", "USD/KRW") or "USD/KRW"),
+        "fx_capital": int(saved_fx.get("last_fx_amount", 10_000_000) or 10_000_000),
         "fx_lot_size": 1000,
         "fx_sl_pct": 1.0,
         "fx_tp_pct": 2.0,
-        "fx_strategy": "MA 크로스",
+        "fx_strategy": str(saved_fx.get("last_fx_strategy", "MA 크로스") or "MA 크로스"),
         "fx_running": False,
         "fx_position": None,
         "fx_trade_log": [],
@@ -34,6 +42,15 @@ def render_fx(user: dict[str, object]) -> None:
     for k, v in AP_DEFAULTS.items():
         if k not in st.session_state:
             st.session_state[k] = v
+    st.session_state.setdefault("fx_strategy_sel", str(st.session_state.get("fx_strategy") or "MA 크로스"))
+    st.session_state.setdefault(
+        "_fx_pref_last",
+        (
+            str(st.session_state.get("fx_pair") or "USD/KRW"),
+            int(st.session_state.get("fx_capital") or 10_000_000),
+            str(st.session_state.get("fx_strategy") or "MA 크로스"),
+        ),
+    )
 
     tab1, tab2, tab3 = st.tabs(["📊 시장 현황", "⚡ 자동매매", "📋 거래 로그"])
 
@@ -80,7 +97,18 @@ def render_fx(user: dict[str, object]) -> None:
                 if st.session_state["fx_pair"] in PAIR_LIST else 0) or PAIR_LIST[0])
             fx_capital = int(st.number_input("투자금 (원)", min_value=100_000, value=int(st.session_state["fx_capital"]), step=100_000))
             fx_lot = int(st.number_input("1회 매매 단위", min_value=100, value=int(st.session_state["fx_lot_size"]), step=100))
-            fx_strategy = str(st.selectbox("전략", ["MA 크로스", "RSI 역추세", "볼린저 밴드 돌파"]) or "MA 크로스")
+            strategy_opts = ["MA 크로스", "RSI 역추세", "볼린저 밴드 돌파"]
+            if st.session_state.get("fx_strategy_sel") not in strategy_opts:
+                st.session_state["fx_strategy_sel"] = strategy_opts[0]
+            fx_strategy = str(
+                st.selectbox(
+                    "전략",
+                    strategy_opts,
+                    index=strategy_opts.index(str(st.session_state.get("fx_strategy_sel") or strategy_opts[0])),
+                    key="fx_strategy_sel",
+                )
+                or strategy_opts[0]
+            )
         with col2:
             fx_sl = float(st.slider("손절 (%)", 0.5, 5.0, float(st.session_state["fx_sl_pct"]), 0.1))
             fx_tp = float(st.slider("익절 (%)", 0.5, 10.0, float(st.session_state["fx_tp_pct"]), 0.1))
@@ -89,6 +117,20 @@ def render_fx(user: dict[str, object]) -> None:
                 f"투자금: {fx_capital:,}원 | 단위: {fx_lot:,}\n\n"
                 f"손절 -{fx_sl}% / 익절 +{fx_tp}%"
             )
+
+        current_pref = (fx_pair, fx_capital, fx_strategy)
+        if current_pref != st.session_state.get("_fx_pref_last"):
+            save_user_preferences(
+                username,
+                "trading_fx",
+                {
+                    "last_fx_pair": fx_pair,
+                    "last_fx_amount": fx_capital,
+                    "last_fx_strategy": fx_strategy,
+                },
+            )
+            log_user_activity(username, "settings_changed", "외환 자동매매 설정 변경", "매매(외환)")
+            st.session_state["_fx_pref_last"] = current_pref
 
         if st.session_state["fx_running"]:
             if st.button("⏹️ 오토파일럿 중지", type="primary", use_container_width=True):

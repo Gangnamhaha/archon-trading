@@ -4,8 +4,8 @@ from typing import Any, cast
 import streamlit as st
 
 from config.auth import is_paid, is_pro, require_auth
-from config.styles import inject_pro_css, show_legal_disclaimer
-from data.database import add_trade, get_trades
+from config.styles import inject_pro_css, load_user_preferences, save_user_preferences, show_legal_disclaimer
+from data.database import add_trade, get_trades, log_user_activity
 from data.fetcher import CRYPTO_PAIRS, fetch_crypto, get_crypto_price
 from views.trading._crypto_exchange import render_exchange_api_tab
 
@@ -39,17 +39,25 @@ def render_crypto(user: dict[str, object]) -> None:
         st.warning("코인 자동매매는 Pro 플랜 전용입니다.")
         st.stop()
 
+    visit_key = f"_visit_logged_crypto_{username}"
+    if not st.session_state.get(visit_key):
+        log_user_activity(username, "page_visit", "", "매매(코인)")
+        st.session_state[visit_key] = True
+
+    saved_crypto = load_user_preferences(username, "trading_crypto")
+
     st.title("🪙 코인 자동매매 (Crypto Autopilot)")
     st.caption("주요 암호화폐의 기술적 지표 기반 시뮬레이션 자동매매 | 실제 거래소 API 연결 시 실거래 가능")
 
     coins = list(CRYPTO_PAIRS.keys())
     defaults = {
-        "c_symbol": "BTC/USD",
+        "c_symbol": str(saved_crypto.get("last_coin", "BTC/USD") or "BTC/USD"),
         "c_capital_usd": 1000.0,
         "c_amount": 0.001,
         "c_sl_pct": 2.0,
         "c_tp_pct": 4.0,
-        "c_strategy": "MA 크로스",
+        "c_strategy": str(saved_crypto.get("last_strategy", "MA 크로스") or "MA 크로스"),
+        "c_exchange": str(saved_crypto.get("last_exchange", "시뮬레이션") or "시뮬레이션"),
         "c_running": False,
         "c_position": None,
         "c_trade_log": [],
@@ -57,6 +65,15 @@ def render_crypto(user: dict[str, object]) -> None:
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
+    st.session_state.setdefault("c_strat_sel", str(st.session_state.get("c_strategy") or "MA 크로스"))
+    st.session_state.setdefault(
+        "_crypto_pref_last",
+        (
+            str(st.session_state.get("c_exchange") or "시뮬레이션"),
+            str(st.session_state.get("c_symbol") or "BTC/USD"),
+            str(st.session_state.get("c_strategy") or "MA 크로스"),
+        ),
+    )
 
     tab1, tab2, tab3, tab4 = st.tabs(["📊 시장 현황", "⚡ 자동매매", "📋 거래 로그", "🔑 거래소 API 연결"])
 
@@ -89,14 +106,40 @@ def render_crypto(user: dict[str, object]) -> None:
         st.subheader("코인 오토파일럿 설정")
         c1, c2 = st.columns(2)
         with c1:
+            exchange = str(st.selectbox("거래소", ["시뮬레이션", "업비트", "바이낸스"], key="c_exchange") or "시뮬레이션")
             symbol = str(st.selectbox("코인", coins, index=coins.index(st.session_state["c_symbol"]) if st.session_state["c_symbol"] in coins else 0) or coins[0])
             capital = float(st.number_input("투자금 (USD)", min_value=10.0, value=float(st.session_state["c_capital_usd"]), step=10.0))
             amount = float(st.number_input("1회 매매 수량", min_value=0.0001, value=float(st.session_state["c_amount"]), step=0.001, format="%.4f"))
-            strategy = str(st.selectbox("전략", ["MA 크로스", "RSI 역추세", "볼린저 밴드 돌파", "모멘텀 추종"], key="c_strat_sel") or "MA 크로스")
+            strategy_opts = ["MA 크로스", "RSI 역추세", "볼린저 밴드 돌파", "모멘텀 추종"]
+            if st.session_state.get("c_strat_sel") not in strategy_opts:
+                st.session_state["c_strat_sel"] = strategy_opts[0]
+            strategy = str(
+                st.selectbox(
+                    "전략",
+                    strategy_opts,
+                    index=strategy_opts.index(str(st.session_state.get("c_strat_sel") or strategy_opts[0])),
+                    key="c_strat_sel",
+                )
+                or "MA 크로스"
+            )
         with c2:
             sl = float(st.slider("손절 (%)", 1.0, 10.0, float(st.session_state["c_sl_pct"]), 0.5))
             tp = float(st.slider("익절 (%)", 1.0, 20.0, float(st.session_state["c_tp_pct"]), 0.5))
-            st.info(f"코인: {symbol}\n\n현재가: ${get_crypto_price(symbol):,.2f} | 수량: {amount:.4f}\n\n손절 -{sl}% / 익절 +{tp}%")
+            st.info(f"거래소: {exchange}\n\n코인: {symbol}\n\n현재가: ${get_crypto_price(symbol):,.2f} | 수량: {amount:.4f}\n\n손절 -{sl}% / 익절 +{tp}%")
+
+        current_pref = (exchange, symbol, strategy)
+        if current_pref != st.session_state.get("_crypto_pref_last"):
+            save_user_preferences(
+                username,
+                "trading_crypto",
+                {
+                    "last_exchange": exchange,
+                    "last_coin": symbol,
+                    "last_strategy": strategy,
+                },
+            )
+            log_user_activity(username, "settings_changed", "코인 자동매매 설정 변경", "매매(코인)")
+            st.session_state["_crypto_pref_last"] = current_pref
 
         if st.session_state["c_running"]:
             if st.button("⏹️ 오토파일럿 중지", type="primary", use_container_width=True, key="c_stop"):

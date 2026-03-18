@@ -121,6 +121,12 @@ def _show_login_form():
                             st.session_state["_login_time"] = datetime.now()
                             st.session_state["_session_timeout"] = timeout_sec
                             try:
+                                from data.database import log_user_activity
+
+                                log_user_activity(str(user["username"]), "login", "", "로그인")
+                            except Exception:
+                                pass
+                            try:
                                 from data.database import create_session_token, update_session_device_info
 
                                 max_sessions = 1 if str(user.get("role", "")) == "admin" else 2

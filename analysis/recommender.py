@@ -1,6 +1,7 @@
+# pyright: basic
 import pandas as pd
 import numpy as np
-from typing import Optional
+from typing import Optional, Any, cast
 from pykrx import stock as krx
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -10,6 +11,16 @@ from analysis.technical import (
     calc_stochastic, calc_adx, calc_williams_r, get_signal_summary,
     calc_ichimoku, calc_obv,
 )
+
+
+def _series_from_column(df: pd.DataFrame, column: str) -> pd.Series:
+    raw = df[column]
+    if isinstance(raw, pd.DataFrame):
+        base_series = raw.iloc[:, 0]
+    else:
+        base_series = pd.Series(raw)
+    numeric = pd.to_numeric(base_series, errors="coerce")
+    return cast(pd.Series, pd.Series(numeric, dtype=float))
 
 
 @lru_cache(maxsize=256)
@@ -48,10 +59,13 @@ def _calc_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 def _momentum_score(df: pd.DataFrame) -> float:
     if len(df) < 20:
         return 0.0
-    close = df["Close"]
-    ret_5 = (close.iloc[-1] / close.iloc[-6] - 1) * 100 if len(close) >= 6 else 0
-    ret_20 = (close.iloc[-1] / close.iloc[-21] - 1) * 100 if len(close) >= 21 else 0
-    ret_60 = (close.iloc[-1] / close.iloc[-61] - 1) * 100 if len(close) >= 61 else 0
+    close = _series_from_column(df, "Close").dropna()
+    if len(close) < 6:
+        return 0.0
+
+    ret_5 = (float(close.iloc[-1]) / float(close.iloc[-6]) - 1) * 100 if len(close) >= 6 else 0.0
+    ret_20 = (float(close.iloc[-1]) / float(close.iloc[-21]) - 1) * 100 if len(close) >= 21 else 0.0
+    ret_60 = (float(close.iloc[-1]) / float(close.iloc[-61]) - 1) * 100 if len(close) >= 61 else 0.0
 
     score = 0.0
     score += np.clip(ret_5 * 3, -15, 15)
@@ -63,11 +77,16 @@ def _momentum_score(df: pd.DataFrame) -> float:
 def _volume_score(df: pd.DataFrame) -> float:
     if len(df) < 20 or "Volume" not in df.columns:
         return 0.0
-    vol = df["Volume"]
-    avg_vol = vol.rolling(20).mean().iloc[-1]
+    vol = _series_from_column(df, "Volume").dropna()
+    if len(vol) < 20:
+        return 0.0
+
+    vol_ma_raw = vol.rolling(20).mean()
+    vol_ma = vol_ma_raw if isinstance(vol_ma_raw, pd.Series) else pd.Series(vol_ma_raw, dtype=float)
+    avg_vol = float(vol_ma.iloc[-1]) if not vol_ma.empty else 0.0
     if avg_vol == 0 or pd.isna(avg_vol):
         return 0.0
-    ratio = vol.iloc[-1] / avg_vol
+    ratio = float(vol.iloc[-1]) / avg_vol
     if ratio >= 3.0:
         return 20.0
     elif ratio >= 2.0:
@@ -85,8 +104,11 @@ def _volume_score(df: pd.DataFrame) -> float:
 def _volatility_penalty(df: pd.DataFrame) -> float:
     if len(df) < 20:
         return 0.0
-    returns = df["Close"].pct_change().dropna()
-    vol_20 = returns.tail(20).std() * np.sqrt(252) * 100
+    returns = _series_from_column(df, "Close").pct_change().dropna()
+    if len(returns) < 20:
+        return 0.0
+
+    vol_20 = float(returns.tail(20).std() * np.sqrt(252) * 100)
     if vol_20 > 80:
         return -20.0
     elif vol_20 > 60:
@@ -99,13 +121,15 @@ def _volatility_penalty(df: pd.DataFrame) -> float:
 def _trend_consistency_score(df: pd.DataFrame) -> float:
     if len(df) < 20:
         return 0.0
-    close = df["Close"]
-    sma_5 = close.rolling(5).mean()
-    sma_20 = close.rolling(20).mean()
+    close = _series_from_column(df, "Close").dropna()
+    if len(close) < 20:
+        return 0.0
 
-    recent_5 = sma_5.tail(10)
-    recent_20 = sma_20.tail(10)
-    above_count = (recent_5 > recent_20).sum()
+    sma_5_raw = close.rolling(5).mean()
+    sma_20_raw = close.rolling(20).mean()
+    recent_5 = np.asarray(sma_5_raw, dtype=float)[-10:]
+    recent_20 = np.asarray(sma_20_raw, dtype=float)[-10:]
+    above_count = int((recent_5 > recent_20).sum())
 
     if above_count >= 9:
         return 15.0
@@ -116,6 +140,261 @@ def _trend_consistency_score(df: pd.DataFrame) -> float:
     elif above_count <= 4:
         return -5.0
     return 0.0
+
+
+@lru_cache(maxsize=1024)
+def _get_ticker_name(ticker: str) -> str:
+    try:
+        return krx.get_market_ticker_name(ticker)
+    except Exception:
+        return ticker
+
+
+@lru_cache(maxsize=2048)
+def _get_returns_series(ticker: str, days: int = 120) -> pd.Series:
+    df = _fetch_ohlcv(ticker, days=days)
+    if df.empty or "Close" not in df.columns:
+        return pd.Series(dtype=float)
+    close = _series_from_column(df, "Close")
+    returns = close.pct_change().dropna()
+    if returns.empty:
+        return pd.Series(dtype=float)
+    return cast(pd.Series, pd.Series(returns, dtype=float))
+
+
+@lru_cache(maxsize=1024)
+def _candidate_factor_snapshot(ticker: str, days: int = 120) -> Optional[dict[str, Any]]:
+    df = _fetch_ohlcv(ticker, days=days)
+    if df.empty or len(df) < 60:
+        return None
+
+    df_ind = _calc_all_indicators(df)
+    tech_info = get_signal_summary(df_ind)
+    tech_score = float(tech_info.get("score", 0.0))
+    mom_score = float(_momentum_score(df))
+    vol_score = float(_volume_score(df))
+    vol_penalty = float(_volatility_penalty(df))
+    trend_score = float(_trend_consistency_score(df))
+
+    close = _series_from_column(df, "Close").dropna()
+    if len(close) < 60:
+        return None
+
+    returns_60 = close.pct_change().dropna().tail(60)
+    annual_return = float(returns_60.mean() * 252) if len(returns_60) >= 20 else 0.0
+    annual_vol = float(returns_60.std() * np.sqrt(252)) if len(returns_60) >= 20 else 0.0
+    risk_adjusted_return = annual_return / annual_vol if annual_vol > 0 else 0.0
+
+    risk_score = float(np.clip(risk_adjusted_return * 22 + vol_penalty, -100, 100))
+    momentum_score = float(np.clip(mom_score * 2.5, -100, 100))
+    volume_score = float(np.clip(vol_score * 5.0, -100, 100))
+    trend_quality_score = float(np.clip(trend_score * 6.0, -100, 100))
+
+    return {
+        "ticker": ticker,
+        "name": _get_ticker_name(ticker),
+        "current_price": int(close.iloc[-1]),
+        "tech_score": tech_score,
+        "mom_score": mom_score,
+        "vol_score": vol_score,
+        "trend_score": trend_score,
+        "risk_adjusted_return": risk_adjusted_return,
+        "momentum_score_norm": momentum_score,
+        "volume_score_norm": volume_score,
+        "trend_quality_score_norm": trend_quality_score,
+        "risk_score_norm": risk_score,
+    }
+
+
+@lru_cache(maxsize=128)
+def _holdings_returns_cache(holdings_key: tuple[str, ...], days: int = 120) -> dict[str, pd.Series]:
+    returns_map: dict[str, pd.Series] = {}
+    for ticker in holdings_key:
+        returns = _get_returns_series(ticker, days=days)
+        if len(returns) >= 20:
+            returns_map[ticker] = returns
+    return returns_map
+
+
+def _diversification_metrics(candidate_returns: pd.Series, holdings_returns: dict[str, pd.Series]) -> tuple[float, float, float]:
+    if candidate_returns.empty or not holdings_returns:
+        return 0.0, 0.0, 0.0
+
+    corr_values: list[float] = []
+    for holding_returns in holdings_returns.values():
+        merged = pd.concat(
+            [candidate_returns.rename("candidate"), holding_returns.rename("holding")],
+            axis=1,
+            join="inner",
+        ).dropna()
+        if len(merged) < 20:
+            continue
+        candidate_aligned = pd.Series(merged.iloc[:, 0], dtype=float)
+        holding_aligned = pd.Series(merged.iloc[:, 1], dtype=float)
+        if len(candidate_aligned) < 2 or len(holding_aligned) < 2:
+            continue
+
+        pair_df = pd.DataFrame({"candidate": candidate_aligned, "holding": holding_aligned}).dropna()
+        if len(pair_df) < 2:
+            continue
+
+        corr_matrix = pair_df.corr()
+        corr_val = float(corr_matrix.iloc[0, 1]) if corr_matrix.shape == (2, 2) else float("nan")
+        if np.isfinite(corr_val):
+            corr_values.append(corr_val)
+
+    if not corr_values:
+        return 0.0, 0.0, 0.0
+
+    avg_corr = float(np.mean(corr_values))
+    diversification_effect = float(1.0 - avg_corr)
+    diversification_score = float(np.clip((0.3 - avg_corr) * 100, -100, 100))
+    return diversification_score, diversification_effect, avg_corr
+
+
+def _portfolio_recommend_grade(total_score: float) -> str:
+    if total_score >= 45:
+        return "A+"
+    if total_score >= 30:
+        return "A"
+    if total_score >= 15:
+        return "B+"
+    if total_score >= 0:
+        return "B"
+    if total_score >= -15:
+        return "C"
+    return "D"
+
+
+def _portfolio_reason(
+    has_holdings: bool,
+    avg_corr: float,
+    risk_adjusted_return: float,
+    tech_score: float,
+    mom_score: float,
+    trend_score: float,
+) -> str:
+    reasons = []
+    if has_holdings:
+        if avg_corr <= 0.1:
+            reasons.append("기존 보유종목과 낮은 상관관계로 분산 효과 극대화")
+        elif avg_corr <= 0.3:
+            reasons.append("보유 포트폴리오와 상관관계가 낮아 리스크 분산에 유리")
+
+    if risk_adjusted_return >= 1.0:
+        reasons.append("최근 60일 리스크 대비 수익률이 우수")
+    elif risk_adjusted_return >= 0.5:
+        reasons.append("변동성 대비 수익 흐름이 안정적")
+
+    if tech_score >= 20:
+        reasons.append("기술지표가 매수 우위 신호를 유지")
+    if mom_score >= 10:
+        reasons.append("단기·중기 모멘텀이 동반 상승")
+    if trend_score >= 8:
+        reasons.append("상승 추세의 일관성이 높음")
+
+    if not reasons:
+        if has_holdings:
+            return "포트폴리오 보완 관점에서 점진적 비중 확대 후보"
+        return "시장 내 상대강도와 추세가 균형적으로 양호"
+
+    return " / ".join(reasons[:2])
+
+
+def recommend_for_portfolio(holdings_tickers: list[str], market: str = "KOSPI", top_n: int = 10) -> pd.DataFrame:
+    market_key = (market or "KOSPI").upper()
+    if market_key not in {"KOSPI", "KOSDAQ"}:
+        market_key = "KOSPI"
+
+    result_columns = [
+        "종목코드",
+        "종목명",
+        "현재가",
+        "종합점수",
+        "추천등급",
+        "분산효과",
+        "리스크조정수익률",
+        "기술점수",
+        "모멘텀",
+        "추천사유",
+    ]
+
+    target_count = max(1, int(top_n))
+    clean_holdings = tuple(sorted({str(t).strip() for t in holdings_tickers if str(t).strip()}))
+    holdings_set = set(clean_holdings)
+    has_holdings = len(holdings_set) > 0
+
+    today = datetime.now()
+    market_tickers: list[str] = []
+    for offset in range(7):
+        probe = (today - timedelta(days=offset)).strftime("%Y%m%d")
+        market_tickers = [str(ticker) for ticker in krx.get_market_ticker_list(probe, market=market_key)]
+        if market_tickers:
+            break
+
+    if not market_tickers:
+        return pd.DataFrame(columns=result_columns)
+
+    candidates = [ticker for ticker in market_tickers if ticker not in holdings_set]
+    if not candidates:
+        return pd.DataFrame(columns=result_columns)
+
+    candidate_pool = candidates
+    holdings_returns = _holdings_returns_cache(clean_holdings, days=120) if has_holdings else {}
+
+    results: list[dict[str, Any]] = []
+    for ticker in candidate_pool:
+        try:
+            snapshot = _candidate_factor_snapshot(ticker, days=120)
+            if not snapshot:
+                continue
+
+            candidate_returns = _get_returns_series(ticker, days=120)
+            div_score, diversification_effect, avg_corr = _diversification_metrics(candidate_returns, holdings_returns)
+
+            total_score = (
+                snapshot["tech_score"] * 0.25
+                + snapshot["momentum_score_norm"] * 0.20
+                + snapshot["volume_score_norm"] * 0.10
+                + div_score * 0.20
+                + snapshot["risk_score_norm"] * 0.15
+                + snapshot["trend_quality_score_norm"] * 0.10
+            )
+            total_score = float(np.clip(total_score, -100, 100))
+
+            reason = _portfolio_reason(
+                has_holdings=has_holdings,
+                avg_corr=avg_corr,
+                risk_adjusted_return=float(snapshot["risk_adjusted_return"]),
+                tech_score=float(snapshot["tech_score"]),
+                mom_score=float(snapshot["mom_score"]),
+                trend_score=float(snapshot["trend_score"]),
+            )
+
+            results.append(
+                {
+                    "종목코드": ticker,
+                    "종목명": snapshot["name"],
+                    "현재가": int(snapshot["current_price"]),
+                    "종합점수": round(total_score, 1),
+                    "추천등급": _portfolio_recommend_grade(total_score),
+                    "분산효과": round(diversification_effect, 3) if has_holdings else 0.0,
+                    "리스크조정수익률": round(float(snapshot["risk_adjusted_return"]), 3),
+                    "기술점수": round(float(snapshot["tech_score"]), 1),
+                    "모멘텀": round(float(snapshot["mom_score"]), 1),
+                    "추천사유": reason,
+                }
+            )
+        except Exception:
+            continue
+
+    if not results:
+        return pd.DataFrame(columns=result_columns)
+
+    result_df = pd.DataFrame(results).sort_values("종합점수", ascending=False).head(target_count)
+    result_df = pd.DataFrame(result_df.loc[:, result_columns]).reset_index(drop=True)
+    result_df.index = result_df.index + 1
+    return cast(pd.DataFrame, result_df)
 
 
 def recommend_stocks(
@@ -220,20 +499,28 @@ def recommend_aggressive_stocks(
             if df.empty or len(df) < 30:
                 continue
 
-            close = df["Close"]
-            volume = df["Volume"]
+            close = _series_from_column(df, "Close").dropna()
+            volume = _series_from_column(df, "Volume").fillna(0)
+            if len(close) < 30:
+                continue
+
             returns = close.pct_change().dropna()
+            if len(returns) < 20:
+                continue
 
             daily_vol = float(returns.tail(20).std() * np.sqrt(252) * 100)
             ret_20d = float((close.iloc[-1] / close.iloc[-21] - 1) * 100) if len(close) >= 21 else 0.0
             ret_5d = float((close.iloc[-1] / close.iloc[-6] - 1) * 100) if len(close) >= 6 else 0.0
             ret_1d = float((close.iloc[-1] / close.iloc[-2] - 1) * 100) if len(close) >= 2 else 0.0
 
-            avg_vol_20 = float(volume.rolling(20).mean().iloc[-1]) if len(volume) >= 20 else 0
+            vol_ma_raw = volume.rolling(20).mean()
+            vol_ma = vol_ma_raw if isinstance(vol_ma_raw, pd.Series) else pd.Series(vol_ma_raw, dtype=float)
+            avg_vol_20 = float(vol_ma.iloc[-1]) if len(vol_ma) >= 20 else 0.0
             vol_ratio = float(volume.iloc[-1] / avg_vol_20) if avg_vol_20 > 0 else 0
 
             df_ind = _calc_all_indicators(df)
-            rsi_val = float(df_ind["RSI"].iloc[-1]) if "RSI" in df_ind.columns and not pd.isna(df_ind["RSI"].iloc[-1]) else 50.0
+            rsi_series = _series_from_column(df_ind, "RSI").dropna() if "RSI" in df_ind.columns else pd.Series(dtype=float)
+            rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
 
             vol_score = np.clip(daily_vol / 10, 0, 30)
             mom_score = np.clip(ret_20d * 2, -20, 40)
@@ -294,7 +581,7 @@ def learn_optimal_weights(
     market: str = "KOSPI",
     lookback_days: int = 60,
     top_n: int = 50,
-) -> dict:
+) -> dict[str, Any]:
     default_weights = {
         "tech_w": 0.35,
         "mom_w": 0.25,
@@ -314,10 +601,10 @@ def learn_optimal_weights(
     end_str = now.strftime("%Y%m%d")
     start_str = start_date.strftime("%Y%m%d")
 
-    tickers = []
+    tickers: list[str] = []
     for offset in range(10):
         probe = (eval_date - timedelta(days=offset)).strftime("%Y%m%d")
-        tickers = krx.get_market_ticker_list(probe, market=market)
+        tickers = [str(ticker) for ticker in krx.get_market_ticker_list(probe, market=market)]
         if tickers:
             break
 
@@ -330,31 +617,36 @@ def learn_optimal_weights(
             "all_results": [],
         }
 
-    samples = []
+    samples: list[dict[str, Any]] = []
     for ticker in tickers:
         try:
-            ohlcv = krx.get_market_ohlcv(start_str, end_str, ticker)
-            if ohlcv.empty:
+            raw_ohlcv = krx.get_market_ohlcv(start_str, end_str, ticker)
+            if raw_ohlcv.empty:
                 continue
 
-            df = ohlcv.rename(columns={
+            renamed = raw_ohlcv.rename(columns={
                 "시가": "Open", "고가": "High", "저가": "Low",
                 "종가": "Close", "거래량": "Volume"
             })
-            df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+            df = pd.DataFrame(renamed[["Open", "High", "Low", "Close", "Volume"]].copy())
             if len(df) < 90:
                 continue
 
-            past_df = df[df.index <= eval_date]
-            future_df = df[df.index > eval_date]
-            if len(past_df) < 60 or future_df.empty:
+            past_df = pd.DataFrame(df[df.index <= eval_date].copy())
+            future_df = pd.DataFrame(df[df.index > eval_date].copy())
+            if len(past_df) < 60 or len(future_df) == 0:
                 continue
 
             ind_df = _calc_all_indicators(past_df)
             tech_info = get_signal_summary(ind_df)
 
-            close_past = float(past_df["Close"].iloc[-1])
-            close_now = float(future_df["Close"].iloc[-1])
+            past_close = _series_from_column(past_df, "Close").dropna()
+            future_close = _series_from_column(future_df, "Close").dropna()
+            if past_close.empty or future_close.empty:
+                continue
+
+            close_past = float(past_close.iloc[-1])
+            close_now = float(future_close.iloc[-1])
             future_return = (close_now / close_past - 1) * 100
 
             samples.append({
@@ -381,20 +673,37 @@ def learn_optimal_weights(
     sample_df = pd.DataFrame(samples)
     top_bucket = max(5, min(20, int(len(sample_df) * 0.2)))
 
-    def evaluate(weights: dict) -> dict:
+    def evaluate(weights: dict[str, float]) -> dict[str, Any]:
         score = (
-            sample_df["tech_score"] * weights["tech_w"]
-            + sample_df["mom_score"] * weights["mom_w"]
-            + sample_df["vol_score"] * weights["vol_w"]
-            + sample_df["trend_score"] * weights["trend_w"]
-            + sample_df["vol_penalty"] * weights["vol_penalty_w"]
+            _series_from_column(sample_df, "tech_score") * weights["tech_w"]
+            + _series_from_column(sample_df, "mom_score") * weights["mom_w"]
+            + _series_from_column(sample_df, "vol_score") * weights["vol_w"]
+            + _series_from_column(sample_df, "trend_score") * weights["trend_w"]
+            + _series_from_column(sample_df, "vol_penalty") * weights["vol_penalty_w"]
         )
 
-        ranked = sample_df.assign(pred_score=score).sort_values("pred_score", ascending=False)
-        top_return = float(ranked.head(top_bucket)["future_return"].mean())
-        corr = float(ranked["pred_score"].corr(ranked["future_return"]))
-        if pd.isna(corr):
-            corr = 0.0
+        ranked = pd.DataFrame(sample_df.assign(pred_score=score)).sort_values("pred_score", ascending=False)
+        top_return_series = _series_from_column(ranked.head(top_bucket), "future_return")
+        top_return = float(top_return_series.mean()) if not top_return_series.empty else 0.0
+
+        corr = 0.0
+        aligned = pd.concat(
+            [
+                _series_from_column(ranked, "pred_score").rename("pred"),
+                _series_from_column(ranked, "future_return").rename("future"),
+            ],
+            axis=1,
+            join="inner",
+        ).dropna()
+        if len(aligned) >= 2:
+            corr_matrix = np.corrcoef(
+                aligned["pred"].to_numpy(dtype=float),
+                aligned["future"].to_numpy(dtype=float),
+            )
+            if corr_matrix.shape == (2, 2):
+                corr = float(corr_matrix[0, 1])
+                if not np.isfinite(corr):
+                    corr = 0.0
 
         return {
             "weights": weights,
@@ -402,7 +711,7 @@ def learn_optimal_weights(
             "corr": round(corr, 4),
         }
 
-    combo_results = []
+    combo_results: list[dict[str, Any]] = []
     for tech_w, mom_w, vol_w, trend_w in product(tech_weights, mom_weights, vol_weights, trend_weights):
         w = {
             "tech_w": tech_w,

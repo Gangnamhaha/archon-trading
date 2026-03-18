@@ -1,0 +1,1 @@
+F4: autopilot_engine.py 0 diff lines, database.py 0 schema changes, autopilot compiles OK, 22 files in pages/

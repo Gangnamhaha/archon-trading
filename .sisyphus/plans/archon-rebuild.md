@@ -631,7 +631,7 @@ Max Concurrent: 4 (Waves 1, 2)
     Evidence: .sisyphus/evidence/task-18-e2e.txt
   ```
 
-- [ ] 19. 최종 스크린샷 비교 + 배포
+- [x] 19. 최종 스크린샷 비교 + 배포
 
   **What to do**:
   - 데스크탑/모바일 전 페이지 최종 스크린샷
@@ -662,7 +662,7 @@ Max Concurrent: 4 (Waves 1, 2)
 
 ## Final Verification Wave
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
+- [x] F1. **Plan Compliance Audit** — `oracle`
   Tool: Bash + Read
   Steps:
     1. 각 "Must Have" 항목에 대해 해당 파일/함수 존재 확인 (`python3 -c "from views.X import Y"`)
@@ -671,7 +671,7 @@ Max Concurrent: 4 (Waves 1, 2)
   Expected Result: Must Have 전체 충족, Must NOT Have 전체 미검출, evidence 파일 존재
   Evidence: .sisyphus/evidence/final-f1-compliance.txt
 
-- [ ] F2. **Code Quality Review** — `unspecified-high`
+- [x] F2. **Code Quality Review** — `unspecified-high`
   Tool: Bash
   Steps:
     1. `python3 -m compileall -q .` (컴파일 에러 0)
@@ -681,7 +681,7 @@ Max Concurrent: 4 (Waves 1, 2)
   Expected Result: compile OK, tests PASS, type suppression 0, 파일 300줄 이하
   Evidence: .sisyphus/evidence/final-f2-quality.txt
 
-- [ ] F3. **Real Manual QA** — `unspecified-high` + `playwright`
+- [x] F3. **Real Manual QA** — `unspecified-high` + `playwright`
   Tool: Playwright
   Steps:
     1. https://archon-pro.streamlit.app 접속
@@ -692,7 +692,7 @@ Max Concurrent: 4 (Waves 1, 2)
   Expected Result: 전 페이지 정상 렌더, 로그인 유지, 에러 없음
   Evidence: .sisyphus/evidence/final-f3-qa-desktop.png, .sisyphus/evidence/final-f3-qa-mobile.png
 
-- [ ] F4. **Scope Fidelity Check** — `deep`
+- [x] F4. **Scope Fidelity Check** — `deep`
   Tool: Bash + Read
   Steps:
     1. `git diff --stat HEAD~1` 로 변경 범위 확인

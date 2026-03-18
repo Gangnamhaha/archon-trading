@@ -21,3 +21,5 @@
 ### Issue 5: pages/ 21개 파일 중복 존재
 - 새로운 views/ 구조와 중복 - Task 15에서 정리 예정
 - autopilot_engine.py의 pages.util_ap_us 참조 때문에 pages/ 폴더 자체는 유지 필수
+
+- 2026-03-18 F1 audit failed the 300-line guardrail in `views/_portfolio_helper.py` (346), `views/analysis/_tools_helper.py` (327), `views/settings/_marketing_logic.py` (484), and `views/settings/admin.py` (346).

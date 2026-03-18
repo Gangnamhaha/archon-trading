@@ -48,3 +48,5 @@ trading_page = st.Page("views/trading/__init__.py", title="매매", icon="⚡")
 - analysis/ 디렉토리 구조 변경 금지 (autopilot_engine이 analysis.recommender 직접 import)
 - 한 파일 500줄 초과 금지
 - 기능 수정/개선 금지 (구조 이동만)
+
+- 2026-03-18 F1 audit: imports, pytest (68 passed), compileall, st.navigation in `app.py`, and 21 task evidence files all verified; the `>500` awk check includes the `total` line, so it needs `grep -v total` to reflect actual per-file counts.
