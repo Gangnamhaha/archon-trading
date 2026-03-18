@@ -74,9 +74,12 @@ def render_home():
 
     st.markdown("#### 오늘 시작 가이드")
     step_cols = st.columns(3)
-    step_cols[0].page_link("views/analysis/__init__.py", label="1) 데이터 확인", icon="📊", use_container_width=True)
-    step_cols[1].page_link("views/analysis/__init__.py", label="2) 종목 추천 받기", icon="🏆", use_container_width=True)
-    step_cols[2].page_link("views/trading/__init__.py", label="3) 자동매매 실행", icon="⚡", use_container_width=True)
+    if step_cols[0].button("📊 1) 데이터 확인", use_container_width=True):
+        st.switch_page("views/analysis/__init__.py")
+    if step_cols[1].button("🏆 2) 종목 추천 받기", use_container_width=True):
+        st.switch_page("views/analysis/__init__.py")
+    if step_cols[2].button("⚡ 3) 자동매매 실행", use_container_width=True):
+        st.switch_page("views/trading/__init__.py")
 
     st.markdown("#### Market Overview")
     if market_data:
@@ -94,29 +97,35 @@ def render_home():
 
     st.markdown("#### Quick Access")
     qa_cols = st.columns(4)
+    _TRADING = "views/trading/__init__.py"
+    _ANALYSIS = "views/analysis/__init__.py"
+    _PORTFOLIO = "views/portfolio.py"
+    _SETTINGS = "views/settings/__init__.py"
+
     if user_is_pro:
         qa_items = [
-            ("views/trading/__init__.py", "⚡ 자동매매"),
-            ("views/analysis/__init__.py", "🏆 종목추천"),
-            ("views/analysis/__init__.py", "🤖 AI예측"),
-            ("views/settings/__init__.py", "📣 마케팅도구"),
+            (_TRADING, "⚡ 자동매매"),
+            (_ANALYSIS, "🏆 종목추천"),
+            (_ANALYSIS, "🤖 AI예측"),
+            (_SETTINGS, "📣 마케팅도구"),
         ]
     elif user_is_paid:
         qa_items = [
-            ("views/analysis/__init__.py", "📊 데이터분석"),
-            ("views/analysis/__init__.py", "🧪 백테스팅"),
-            ("views/analysis/__init__.py", "📰 뉴스감성분석"),
-            ("views/portfolio.py", "📁 포트폴리오"),
+            (_ANALYSIS, "📊 데이터분석"),
+            (_ANALYSIS, "🧪 백테스팅"),
+            (_ANALYSIS, "📰 뉴스감성분석"),
+            (_PORTFOLIO, "📁 포트폴리오"),
         ]
     else:
         qa_items = [
-            ("views/analysis/__init__.py", "📊 데이터분석"),
-            ("views/settings/__init__.py", "❓ 자주하는질문"),
-            ("views/settings/__init__.py", "📩 고객문의"),
-            ("views/settings/__init__.py", "💳 플랜 업그레이드"),
+            (_ANALYSIS, "📊 데이터분석"),
+            (_SETTINGS, "❓ 자주하는질문"),
+            (_SETTINGS, "📩 고객문의"),
+            (_SETTINGS, "💳 플랜 업그레이드"),
         ]
-    for col, (page, label) in zip(qa_cols, qa_items):
-        col.page_link(page, label=label, use_container_width=True)
+    for col, (target_path, label) in zip(qa_cols, qa_items):
+        if col.button(label, use_container_width=True):
+            st.switch_page(target_path)
 
     plan_badge = "💎 Pro" if user_plan == "pro" else ("✨ Plus" if user_plan == "plus" else "🆓 Free")
     st.sidebar.markdown(f"**{user['username']}** ({user['role']}) — {plan_badge}")
