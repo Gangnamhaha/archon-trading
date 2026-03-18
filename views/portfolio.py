@@ -5,7 +5,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from config.auth import is_paid, is_pro
+from config.auth import is_paid, is_pro, require_auth
+from config.styles import inject_pro_css
 from data.database import add_stock, get_portfolio, remove_stock
 from portfolio.tracker import PortfolioTracker
 from views._portfolio_helper import (
@@ -16,7 +17,9 @@ from views._portfolio_helper import (
 )
 
 
-def render_portfolio(user: dict[str, Any]) -> None:
+def render_portfolio() -> None:
+    user = require_auth()
+    inject_pro_css()
     st.title("💼 포트폴리오 트래커")
 
     _ = add_stock
