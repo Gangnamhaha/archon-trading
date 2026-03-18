@@ -1,0 +1,1 @@
+Task 7: sys.path.insert removed from 21 page files. grep count=0 in pages/ and config/. 69 passed

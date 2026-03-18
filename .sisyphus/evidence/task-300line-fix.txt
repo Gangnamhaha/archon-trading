@@ -1,0 +1,8 @@
+Task: 300-line fix
+File sizes after:
+- views/analysis/tools.py: 223 lines
+- views/settings/payment.py: 295 lines
+- views/settings/marketing.py: 142 lines
+- views/portfolio.py: 138 lines
+Import test: OK
+Pytest: 68 passed

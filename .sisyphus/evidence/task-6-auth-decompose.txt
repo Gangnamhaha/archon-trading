@@ -1,0 +1,1 @@
+Task 6: auth decomposed into auth/core.py, auth/session.py, auth/ui.py. 69 passed

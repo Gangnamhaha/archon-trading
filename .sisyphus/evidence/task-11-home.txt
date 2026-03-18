@@ -1,0 +1,18 @@
+Task 11: Home page finalization
+================================
+
+Command 1: from views.home import render_home; print('OK')
+Result: OK
+
+Command 2: python3 -m compileall -q views/home.py
+Result: (no output = success)
+
+Command 3: pytest tests/ -q
+Result: 69 passed
+
+Changes Made:
+- Removed module-level render_home() call from views/home.py (line 163)
+- Updated app.py to import render_home function directly
+- Changed home_page from st.Page("views/home.py", ...) to st.Page(render_home, ...)
+- All 69 tests passing
+- Import verification successful

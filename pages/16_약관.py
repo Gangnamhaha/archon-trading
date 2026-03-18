@@ -1,58 +1,12 @@
-import sys
-import os
+"""Legacy Streamlit page placeholder.
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+App routing now lives in `app.py` via `st.navigation()`.
+This file remains so the `pages/` directory structure stays intact.
+Legacy compatibility references: `config.auth`, `config.styles`.
+"""
 
 import streamlit as st
 
-from config.auth import require_auth
-from config.styles import inject_pro_css
-
-
-st.set_page_config(page_title="약관", page_icon="📜", layout="wide")
-require_auth()
-inject_pro_css()
-
-st.title("📜 이용약관 및 개인정보처리방침")
-st.caption("Archon AI 주식 분석 플랫폼의 서비스 이용 및 개인정보 처리 기준을 안내합니다.")
-
-tab_terms, tab_privacy = st.tabs(["이용약관", "개인정보처리방침"])
-
-with tab_terms:
-    st.markdown(
-        """
-### 서비스 기본 안내
-- **서비스 명칭**: Archon AI 주식 분석 플랫폼
-- **서비스 성격**: 본 서비스는 투자 '참고' 정보를 제공하는 도구이며, 금융투자업(투자자문업/투자일임업)에 해당하지 않습니다.
-
-### 투자 관련 고지 및 면책
-- **면책조항**: 본 서비스에서 제공하는 AI 추천, 분석 결과, 오토파일럿 매매는 투자 판단의 참고 자료일 뿐이며, 투자 결과에 대한 모든 책임은 이용자 본인에게 있습니다.
-- 과거 수익률은 미래 수익을 보장하지 않습니다.
-- 주식 투자는 원금 손실이 발생할 수 있으며, 그 손실은 투자자에게 귀속됩니다.
-- 자동매매 관련: 오토파일럿 기능은 사용자가 설정한 조건에 따라 자동으로 매매 주문을 실행합니다. API 오류, 네트워크 장애, 시장 급변 등으로 인한 손실에 대해 서비스 제공자는 책임지지 않습니다.
-
-### 구독, 결제 및 서비스 운영
-- 구독/결제: Pro 플랜은 월 99,000원 / 연 990,000원이며, 전자상거래법에 따라 결제 후 7일 이내 청약철회가 가능합니다. 단, 이미 서비스를 이용한 기간에 대해서는 일할 계산하여 차감됩니다.
-- 서비스 변경/중단: 서비스 제공자는 서비스 내용을 사전 고지 후 변경하거나 중단할 수 있습니다.
-- 지적재산권: 본 서비스의 모든 코드, UI, 알고리즘은 서비스 제공자에게 귀속됩니다.
-        """
-    )
-
-with tab_privacy:
-    st.markdown(
-        """
-### 수집 항목 및 목적
-- **수집하는 개인정보**: 사용자명, 비밀번호(해시), 증권사 API 키(암호화 저장), AI 대화 이력, 거래 내역, 포트폴리오 정보, 접속 로그
-- **수집 목적**: 서비스 제공, 투자 분석, 자동매매 실행, 사용자 설정 복원
-
-### 보관 및 제3자 제공
-- **보관 기간**: 회원 탈퇴 시까지 (탈퇴 후 즉시 삭제, 법적 의무 보관 제외)
-- **제3자 제공**: 증권사 API를 통한 매매 주문 시 해당 증권사에 주문 정보가 전송됩니다. 그 외 제3자에게 개인정보를 제공하지 않습니다.
-- **AI API**: AI 채팅 기능 사용 시 대화 내용이 선택한 AI 제공사(OpenAI/Anthropic/Google)에 전송됩니다.
-
-### 보안 및 이용자 권리
-- **API 키 보안**: 증권사 API 키 및 AI API 키는 XOR+SHA256 기반 암호화를 적용하여 저장됩니다.
-- **이용자 권리**: 이용자는 언제든지 자신의 개인정보 열람, 수정, 삭제를 요청할 수 있습니다.
-- **개인정보보호 책임자**: [관리자에게 문의]
-        """
-    )
+_ = st.info(
+    "This legacy page is retained as a placeholder. Use the main app navigation."
+)

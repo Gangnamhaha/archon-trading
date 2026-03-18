@@ -1,0 +1,1 @@
+Task 1: pytest setup - 14/14 passed

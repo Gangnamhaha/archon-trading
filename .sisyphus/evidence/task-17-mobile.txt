@@ -1,0 +1,1 @@
+Task 17: Mobile nav updated to 5 pages (홈/매매/분석/포트폴리오/설정). 48px touch targets. 68 passed

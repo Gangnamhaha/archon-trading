@@ -1,0 +1,1 @@
+Task 8: views/ structure created, all imports OK

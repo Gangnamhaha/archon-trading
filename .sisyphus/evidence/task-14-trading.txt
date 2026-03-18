@@ -1,0 +1,1 @@
+Task 14: Trading consolidated (stock/fx/crypto) with st.radio lazy loading. Autopilot engine preserved. 68 passed
