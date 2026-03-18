@@ -19,10 +19,9 @@ from views._portfolio_helper import (
 def render_portfolio(user: dict[str, Any]) -> None:
     st.title("💼 포트폴리오 트래커")
 
-    _ = user
     _ = add_stock
-    user_is_pro = is_pro()
-    user_is_paid = is_paid()
+    user_is_pro = is_pro(user)
+    user_is_paid = is_paid(user)
     max_free_stocks = 5
 
     tracker = PortfolioTracker()
