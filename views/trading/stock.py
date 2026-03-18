@@ -98,6 +98,37 @@ def _render_manual_order() -> None:
     c3.metric("계좌", str(status.get("account") or "-"))
     st.caption(market_status_text())
 
+    if st.button("💰 잔고 조회", use_container_width=True, key="btn_balance"):
+        with st.spinner("잔고 조회 중..."):
+            bal = api.get_balance()
+        if "error" in bal:
+            st.error(f"잔고 조회 실패: {bal['error']}")
+        else:
+            b1, b2, b3, b4 = st.columns(4)
+            b1.metric("예수금", f"{int(bal.get('예수금', 0)):,}원")
+            b2.metric("총매입금액", f"{int(bal.get('총매입금액', 0)):,}원")
+            b3.metric("총평가금액", f"{int(bal.get('총평가금액', 0)):,}원")
+            pnl = int(bal.get("총평가손익", 0))
+            b4.metric("총평가손익", f"{pnl:+,}원", delta=f"{pnl:+,}")
+
+            holdings = bal.get("holdings", [])
+            if holdings:
+                st.markdown("##### 보유 종목")
+                st.dataframe(
+                    pd.DataFrame(holdings),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "수익률": st.column_config.NumberColumn(format="%.2f%%"),
+                        "평가금액": st.column_config.NumberColumn(format="%d"),
+                        "평가손익": st.column_config.NumberColumn(format="%d"),
+                    },
+                )
+            else:
+                st.info("보유 종목이 없습니다.")
+
+    st.markdown("---")
+
     def place(side: str, ticker: str, qty: int, price: float) -> None:
         result = api.buy_order(ticker, qty, price) if side == "BUY" else api.sell_order(ticker, qty, price)
         if result.get("status") == "success":
