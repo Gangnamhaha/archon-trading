@@ -8,7 +8,7 @@ from config.auth import is_paid, is_pro, require_auth
 from config.styles import inject_pro_css, load_user_preferences, save_user_preferences, show_legal_disclaimer
 from data.database import add_trade, get_autopilot_jobs, get_autopilot_logs, log_user_activity
 from trading.autopilot_engine import is_running, start_background_autopilot, stop_background_autopilot
-from trading.kis_api import KISApi, market_status_text
+from trading.kis_api import KISApi, is_market_open, market_status_text
 from trading.kiwoom_api import KiwoomApi
 
 
@@ -237,44 +237,99 @@ def _render_autopilot(username: str) -> None:
         },
     )
 
-    running = is_running(username, 0)
-    left, right = st.columns(2)
-    with left:
-        if not running and st.button("🚀 AP-1 시작", use_container_width=True, type="primary"):
-            log_user_activity(username, "autopilot_started", f"{market}/{mode}", "매매(국내주식)")
-            start_background_autopilot(
-                username=username,
-                slot_idx=0,
-                market=market,
-                mode=mode,
-                capital=capital,
-                max_stocks=max_stocks,
-                max_per=max_per,
-                stop_loss=sl,
-                take_profit=tp,
-                daily_limit=daily,
-                usdkrw=usdkrw,
-            )
-            st.rerun()
-    with right:
-        if running and st.button("🛑 AP-1 중지", use_container_width=True, type="primary"):
-            log_user_activity(username, "autopilot_stopped", "AP-1", "매매(국내주식)")
-            stop_background_autopilot(username, 0)
-            st.rerun()
+    notice = st.session_state.pop("_ap_notice", None)
+    if isinstance(notice, dict):
+        level = str(notice.get("level") or "info")
+        message = str(notice.get("message") or "")
+        if message:
+            if level == "success":
+                st.success(message)
+            elif level == "warning":
+                st.warning(message)
+            elif level == "error":
+                st.error(message)
+            else:
+                st.info(message)
 
     jobs = get_autopilot_jobs(username)
     job = next((j for j in jobs if int(str(j.get("slot_idx", -1))) == 0), None)
+    running = is_running(username, 0) or bool(job and str(job.get("status", "")) == "running")
+    left, right = st.columns(2)
+    with left:
+        if not running and st.button("🚀 AP-1 시작", use_container_width=True, type="primary"):
+            try:
+                if market == "US":
+                    st.session_state["_ap_notice"] = {
+                        "level": "warning",
+                        "message": "⚠️ US 오토파일럿은 현재 준비 중입니다. KR 시장을 선택해 주세요.",
+                    }
+                    st.rerun()
+                if market in {"KOSPI", "KOSDAQ"} and not is_market_open():
+                    st.session_state["_ap_notice"] = {
+                        "level": "warning",
+                        "message": f"⚠️ 현재 장 운영시간이 아닙니다. ({market_status_text()})",
+                    }
+                    st.rerun()
+                started = start_background_autopilot(
+                    username=username,
+                    slot_idx=0,
+                    market=market,
+                    mode=mode,
+                    capital=capital,
+                    max_stocks=max_stocks,
+                    max_per=max_per,
+                    stop_loss=sl,
+                    take_profit=tp,
+                    daily_limit=daily,
+                    usdkrw=usdkrw,
+                )
+                if started:
+                    log_user_activity(username, "autopilot_started", f"{market}/{mode}", "매매(국내주식)")
+                    st.session_state["_ap_notice"] = {
+                        "level": "success",
+                        "message": "🚀 AP-1 시작 요청 완료. 수 초 내 상태/로그가 갱신됩니다.",
+                    }
+                else:
+                    st.session_state["_ap_notice"] = {
+                        "level": "warning",
+                        "message": "⚠️ AP-1이 이미 실행 중입니다.",
+                    }
+            except Exception as e:
+                st.session_state["_ap_notice"] = {
+                    "level": "error",
+                    "message": f"오토파일럿 시작 실패: {e}",
+                }
+            st.rerun()
+    with right:
+        if running and st.button("🛑 AP-1 중지", use_container_width=True, type="primary"):
+            try:
+                stop_background_autopilot(username, 0)
+                log_user_activity(username, "autopilot_stopped", "AP-1", "매매(국내주식)")
+                st.session_state["_ap_notice"] = {
+                    "level": "success",
+                    "message": "🛑 AP-1 중지 요청 완료.",
+                }
+            except Exception as e:
+                st.session_state["_ap_notice"] = {
+                    "level": "error",
+                    "message": f"오토파일럿 중지 실패: {e}",
+                }
+            st.rerun()
+
     if job:
-        m1, m2, m3 = st.columns(3)
+        m1, m2, m3, m4 = st.columns(4)
         m1.metric("상태", str(job.get("status", "-")))
         m2.metric("실행 횟수", int(str(job.get("run_count", 0))))
         m3.metric("일간 손익", f"{float(str(job.get('daily_pnl', 0.0))):+.2f}%")
+        m4.metric("다음 실행", str(job.get("next_run_at") or "-"))
 
     logs = get_autopilot_logs(username, 0, limit=30)
     if isinstance(logs, pd.DataFrame) and not logs.empty and "message" in logs.columns:
         st.text_area("최근 로그", "\n".join(logs["message"].astype(str).tail(15).tolist()), height=180)
     elif isinstance(logs, list) and logs:
         st.text_area("최근 로그", "\n".join([str(x) for x in logs[-15:]]), height=180)
+    elif running:
+        st.info("오토파일럿 실행 중입니다. 최초 스캔/로그 반영까지 수 초가 걸릴 수 있습니다.")
 
 
 def render_stock(user: dict[str, object]) -> None:

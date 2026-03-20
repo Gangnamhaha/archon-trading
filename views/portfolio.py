@@ -121,7 +121,7 @@ def _render_portfolio_recommendations(portfolio_df: pd.DataFrame, holdings: pd.D
             st.warning("추천 결과가 없습니다. 시장을 변경하거나 잠시 후 다시 시도하세요.")
             return
 
-        styled_df = cached_df.style.applymap(_score_style, subset=["종합점수"]).applymap(
+        styled_df = cached_df.style.map(_score_style, subset=["종합점수"]).map(
             _diversification_style,
             subset=["분산효과"],
         )

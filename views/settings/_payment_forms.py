@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import streamlit as st
@@ -67,18 +68,21 @@ def render_toss_button(plan_type: str, toss_client_key: str, username: str) -> N
 
     button_suffix = plan_type.replace("_", "")
     button_label = f"토스 {get_plan_name(get_plan_tier(plan_type))} 결제"
+    safe_client_key = json.dumps(str(toss_client_key))
+    safe_order_name = json.dumps(str(plan_details["product_name"]))
+    safe_customer_name = json.dumps(str(username))
     components.html(
         f"""
         <script src="https://js.tosspayments.com/v1/payment"></script>
         <button onclick="tossPayment{button_suffix}()" style="width:100%;padding:14px;background:#0064FF;color:white;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;">{button_label}</button>
         <script>
-        var tossPayments{button_suffix} = TossPayments('{toss_client_key}');
+        var tossPayments{button_suffix} = TossPayments({safe_client_key});
         function tossPayment{button_suffix}() {{
             tossPayments{button_suffix}.requestPayment('카드', {{
                 amount: {int(plan_details['amount'])},
                 orderId: 'archon-{username}-{button_suffix}-' + Date.now(),
-                orderName: '{str(plan_details['product_name'])}',
-                customerName: '{username}',
+                orderName: {safe_order_name},
+                customerName: {safe_customer_name},
                 successUrl: window.location.origin + '?payment=success&provider=toss&plan_type={plan_type}',
                 failUrl: window.location.origin + '?payment=fail',
             }});
@@ -95,21 +99,24 @@ def render_portone_button(plan_type: str, portone_code: str, username: str) -> N
 
     button_suffix = plan_type.replace("_", "")
     button_label = f"아임포트 {get_plan_name(get_plan_tier(plan_type))} 결제"
+    safe_portone_code = json.dumps(str(portone_code))
+    safe_product_name = json.dumps(str(plan_details["product_name"]))
+    safe_buyer_name = json.dumps(str(username))
     components.html(
         f"""
         <script src="https://cdn.iamport.kr/v1/iamport.js"></script>
         <button onclick="portonePayment{button_suffix}()" style="width:100%;padding:14px;background:#FF6B35;color:white;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;">{button_label}</button>
         <script>
         var IMP{button_suffix} = window.IMP;
-        IMP{button_suffix}.init('{portone_code}');
+        IMP{button_suffix}.init({safe_portone_code});
         function portonePayment{button_suffix}() {{
             IMP{button_suffix}.request_pay({{
                 pg: 'html5_inicis',
                 pay_method: 'card',
                 merchant_uid: 'archon-{username}-{button_suffix}-' + Date.now(),
-                name: '{str(plan_details['product_name'])}',
+                name: {safe_product_name},
                 amount: {int(plan_details['amount'])},
-                buyer_name: '{username}',
+                buyer_name: {safe_buyer_name},
             }}, function(rsp) {{
                 if (rsp.success) {{
                     window.location.href = window.location.origin + '?payment=success&provider=portone&plan_type={plan_type}';

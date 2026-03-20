@@ -167,12 +167,28 @@ def render_crypto(user: dict[str, object]) -> None:
                     if pct <= -sl_v or pct >= tp_v:
                         reason = "손절" if pct <= -sl_v else "익절"
                         st.session_state["c_trade_log"].append(f"[{now_str}] {reason} {st.session_state['c_symbol']} @ ${cur_price:,.2f} ({pct:+.2f}%)")
-                        add_trade(st.session_state["c_symbol"].replace("/", ""), "CRYPTO", "SELL", cur_price, cast(int, amt), f"코인 {reason}")
+                        trade_qty = max(1, int(round(amt * 10000)))
+                        add_trade(
+                            st.session_state["c_symbol"].replace("/", ""),
+                            "CRYPTO",
+                            "SELL",
+                            cur_price,
+                            trade_qty,
+                            f"코인 {reason} | qty={amt:.4f}",
+                        )
                         st.session_state["c_position"] = None
                 elif signal == "BUY":
                     st.session_state["c_position"] = {"entry_price": cur_price, "amount": amt, "symbol": st.session_state["c_symbol"]}
                     st.session_state["c_trade_log"].append(f"[{now_str}] BUY {st.session_state['c_symbol']} @ ${cur_price:,.2f} | qty {amt:.4f}")
-                    add_trade(st.session_state["c_symbol"].replace("/", ""), "CRYPTO", "BUY", cur_price, cast(int, amt), f"코인 {st.session_state['c_strategy']}")
+                    trade_qty = max(1, int(round(amt * 10000)))
+                    add_trade(
+                        st.session_state["c_symbol"].replace("/", ""),
+                        "CRYPTO",
+                        "BUY",
+                        cur_price,
+                        trade_qty,
+                        f"코인 {st.session_state['c_strategy']} | qty={amt:.4f}",
+                    )
 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("현재가 (USD)", f"${cur_price:,.2f}")

@@ -13,6 +13,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional
 import time as _time
+import warnings
 
 _rate_limits: dict[str, list[float]] = {}
 
@@ -28,9 +29,17 @@ def _check_rate_limit(key: str, max_calls: int = 10, window: int = 60) -> bool:
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "portfolio.db")
 
-_ENCRYPT_KEY = hashlib.sha256(
-    os.environ.get("ARCHON_SECRET", "archon-default-key-change-me").encode()
-).digest()
+_ARCHON_SECRET = os.environ.get("ARCHON_SECRET")
+if not _ARCHON_SECRET or _ARCHON_SECRET == "archon-default-key-change-me":
+    warnings.warn(
+        "ARCHON_SECRET environment variable not set or using default value. "
+        "Set ARCHON_SECRET in deployment for secure credential encryption.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    _ARCHON_SECRET = "archon-default-key-change-me"
+
+_ENCRYPT_KEY = hashlib.sha256(_ARCHON_SECRET.encode()).digest()
 
 _SENSITIVE_KEYS = ("api_key", "app_key", "app_secret", "secret_key")
 
@@ -658,8 +667,21 @@ def get_error_dashboard_data(hours: int = 24) -> dict[str, object]:
             "total_errors": 0,
             "top_error_code": "-",
             "top_error_page": "-",
-            "recent_errors": pd.DataFrame(columns=["timestamp", "username", "page", "error_code", "message"]),
-            "page_frequency": pd.DataFrame(columns=["page", "error_count"]),
+            "recent_errors": pd.DataFrame(
+                {
+                    "timestamp": pd.Series(dtype=str),
+                    "username": pd.Series(dtype=str),
+                    "page": pd.Series(dtype=str),
+                    "error_code": pd.Series(dtype=str),
+                    "message": pd.Series(dtype=str),
+                }
+            ),
+            "page_frequency": pd.DataFrame(
+                {
+                    "page": pd.Series(dtype=str),
+                    "error_count": pd.Series(dtype=int),
+                }
+            ),
         }
     finally:
         conn.close()

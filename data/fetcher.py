@@ -5,6 +5,7 @@
 """
 import pandas as pd
 from functools import lru_cache
+from typing import Optional, cast
 import yfinance as yf
 from pykrx import stock as krx
 from datetime import datetime, timedelta
@@ -30,18 +31,26 @@ def fetch_us_stock(ticker: str, period: str = "1y") -> pd.DataFrame:
                 available = [c for c in cols if c in data.columns]
             data = data[available].copy()
             data.index.name = "Date"
-            if data.index.tz is not None:
-                data.index = data.index.tz_localize(None)
-            return data
+            index_tz = getattr(data.index, "tz", None)
+            tz_localize = getattr(data.index, "tz_localize", None)
+            if index_tz is not None and callable(tz_localize):
+                data.index = pd.Index(tz_localize(None))
+            return cast(pd.DataFrame, data)
         except Exception as e:
             if attempt < max_retries - 1:
                 time.sleep(1.5 * (attempt + 1))
                 continue
             print(f"[ERROR] US stock fetch failed ({ticker}): {e}")
             return pd.DataFrame()
+    return pd.DataFrame()
 
 
-def fetch_kr_stock(ticker: str, start: str = None, end: str = None, period: str = "1y") -> pd.DataFrame:
+def fetch_kr_stock(
+    ticker: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    period: str = "1y",
+) -> pd.DataFrame:
     """한국 주가 데이터 조회 (pykrx)"""
     try:
         if end is None:
@@ -64,7 +73,7 @@ def fetch_kr_stock(ticker: str, start: str = None, end: str = None, period: str 
         })
         data = data[["Open", "High", "Low", "Close", "Volume"]].copy()
         data.index.name = "Date"
-        return data
+        return cast(pd.DataFrame, data)
     except Exception as e:
         print(f"[ERROR] 한국 주가 조회 실패 ({ticker}): {e}")
         return pd.DataFrame()
@@ -93,7 +102,7 @@ def get_kr_stock_list() -> pd.DataFrame:
         return pd.DataFrame(stocks)
     except Exception as e:
         print(f"[ERROR] 한국 종목 리스트 조회 실패: {e}")
-        return pd.DataFrame(columns=["ticker", "name"])
+        return pd.DataFrame({"ticker": pd.Series(dtype=str), "name": pd.Series(dtype=str)})
 
 
 # ─── FX (외환) ────────────────────────────────────────────────────────────────
@@ -130,10 +139,12 @@ def fetch_fx_pair(pair: str, period: str = "1y") -> pd.DataFrame:
                     data.columns = data.columns.get_level_values(0)
                 cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in data.columns]
                 data = data[cols].copy()
-                if data.index.tz is not None:
-                    data.index = data.index.tz_localize(None)
+                index_tz = getattr(data.index, "tz", None)
+                tz_localize = getattr(data.index, "tz_localize", None)
+                if index_tz is not None and callable(tz_localize):
+                    data.index = pd.Index(tz_localize(None))
                 data.index.name = "Date"
-                return data
+                return cast(pd.DataFrame, data)
             except Exception:
                 if attempt < 2:
                     time.sleep(1.5)
@@ -168,7 +179,7 @@ CRYPTO_PAIRS: dict[str, str] = {
     "LTC/USD": "LTC-USD",
     "BCH/USD": "BCH-USD",
     "ATOM/USD": "ATOM-USD",
-    "UNI/USD": "UNI7083-USD",
+    "UNI/USD": "UNI-USD",
 }
 
 

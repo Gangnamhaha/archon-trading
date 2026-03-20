@@ -32,9 +32,12 @@ def _render_data_analysis() -> None:
     if market_code == "US":
         popular = get_us_popular_stocks()
         selected = st.sidebar.selectbox("인기 종목", popular["ticker"].tolist(), index=0, key="data_popular")
-        ticker = st.sidebar.text_input("종목 티커", value=selected, key="data_ticker_input")
+        if selected and st.session_state.get("_prev_data_popular") != selected:
+            st.session_state["data_ticker_input"] = selected
+            st.session_state["_prev_data_popular"] = selected
+        ticker = st.sidebar.text_input("종목 티커", key="data_ticker_input")
     else:
-        ticker = st.sidebar.text_input("종목 코드", value="005930", key="data_ticker_code")
+        ticker = st.sidebar.text_input("종목 코드", key="data_ticker_code")
     period = st.sidebar.selectbox("조회 기간", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3, key="data_period")
     if user_is_paid:
         interval = st.sidebar.selectbox("차트 간격", ["1d", "1wk", "1mo", "5m", "15m", "1h"], key="data_interval")

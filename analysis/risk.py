@@ -82,19 +82,28 @@ def calc_max_drawdown_detail(equity: pd.Series) -> dict:
     if len(equity) < 2:
         return {}
 
-    rolling_max = equity.cummax()
-    drawdown = (equity - rolling_max) / rolling_max
+    series = pd.Series(equity, dtype=float)
+    rolling_max = series.cummax()
+    drawdown = (series - rolling_max) / rolling_max
 
-    mdd = drawdown.min()
-    mdd_end_idx = drawdown.idxmin()
-    mdd_start_idx = equity[:mdd_end_idx].idxmax()
+    mdd = float(drawdown.min())
+    mdd_end_pos = int(drawdown.to_numpy().argmin())
+    mdd_end_idx = drawdown.index[mdd_end_pos]
+
+    pre_peak = series.iloc[: mdd_end_pos + 1]
+    mdd_start_pos = int(pre_peak.to_numpy().argmax())
+    mdd_start_idx = pre_peak.index[mdd_start_pos]
 
     # 회복일
-    recovery = equity[mdd_end_idx:]
-    recovery_idx = recovery[recovery >= rolling_max[mdd_end_idx]].index
-    recovery_date = recovery_idx[0] if len(recovery_idx) > 0 else None
+    recovery = series.iloc[mdd_end_pos:]
+    recovery_target = float(rolling_max.iloc[mdd_end_pos])
+    recovery_hits = recovery[recovery >= recovery_target]
+    recovery_date = recovery_hits.index[0] if not recovery_hits.empty else None
 
-    drawdown_days = (mdd_end_idx - mdd_start_idx).days if hasattr(mdd_end_idx, 'days') or hasattr(mdd_start_idx, 'days') else 0
+    if isinstance(mdd_end_idx, pd.Timestamp) and isinstance(mdd_start_idx, pd.Timestamp):
+        drawdown_days = int((mdd_end_idx - mdd_start_idx).days)
+    else:
+        drawdown_days = int(mdd_end_pos - mdd_start_pos)
 
     return {
         "MDD (%)": round(float(mdd) * 100, 2),

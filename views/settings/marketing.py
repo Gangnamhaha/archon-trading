@@ -3,11 +3,13 @@ from datetime import datetime
 import streamlit as st
 
 from config.styles import require_plan, show_legal_disclaimer
+from views.settings._marketing_content import (
+    generate_performance_report,
+    generate_recommendation_post,
+)
 from views.settings._marketing_logic import (
     MARKETS,
     PLATFORMS,
-    generate_performance_report,
-    generate_recommendation_post,
     render_marketing_automation_tab,
 )
 

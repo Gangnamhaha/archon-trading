@@ -59,19 +59,12 @@ def _init_users_table():
 
     cursor = conn.execute("SELECT COUNT(*) FROM users WHERE role='admin'")
     if cursor.fetchone()[0] == 0:
+        default_pw = os.environ.get("ARCHON_ADMIN_PASSWORD", "7777")
         salt = secrets.token_hex(16)
-        pw_hash = hashlib.pbkdf2_hmac("sha256", "7777".encode(), salt.encode(), 100_000).hex()
+        pw_hash = hashlib.pbkdf2_hmac("sha256", default_pw.encode(), salt.encode(), 100_000).hex()
         conn.execute(
             "INSERT INTO users (username, password_hash, salt, role, plan) VALUES (?, ?, ?, ?, ?)",
             ("admin", pw_hash, salt, "admin", "pro"),
-        )
-        conn.commit()
-    else:
-        salt = secrets.token_hex(16)
-        pw_hash = hashlib.pbkdf2_hmac("sha256", "7777".encode(), salt.encode(), 100_000).hex()
-        conn.execute(
-            "UPDATE users SET password_hash=?, salt=? WHERE username='admin'",
-            (pw_hash, salt),
         )
         conn.commit()
 
