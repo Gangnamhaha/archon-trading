@@ -94,6 +94,7 @@ class AuthSmokeTests(unittest.TestCase):
                 "authenticated": True,
                 "user": {"id": 1, "username": "admin", "role": "admin", "plan": "pro"},
                 "_login_time": datetime.now() - timedelta(seconds=5),
+                "_last_activity_time": datetime.now() - timedelta(seconds=5),
                 "_session_timeout": 1,
             }
         )

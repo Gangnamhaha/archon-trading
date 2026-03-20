@@ -50,6 +50,7 @@ def _clear_auth_state():
         "_session_timeout",
         "_auth_token",
         "_last_session_touch",
+        "_last_activity_time",
         "_active_sessions_cache",
         "_active_sessions_cache_at",
         "_active_sessions_cache_key",
@@ -63,11 +64,16 @@ def _check_session_expiry():
     timeout = st.session_state.get("_session_timeout", 86400)
     if timeout == 0:
         return
-    login_time = st.session_state.get("_login_time")
-    if not login_time:
-        st.session_state["_login_time"] = datetime.now()
+    # Use last activity time instead of login time so that
+    # ongoing usage (including background heartbeats) keeps the session alive.
+    last_activity = st.session_state.get("_last_activity_time")
+    now = datetime.now()
+    if not last_activity:
+        st.session_state["_last_activity_time"] = now
         return
-    elapsed = (datetime.now() - login_time).total_seconds()
+    elapsed = (now - last_activity).total_seconds()
+    # Refresh activity timestamp on every page interaction
+    st.session_state["_last_activity_time"] = now
     if elapsed > timeout:
         token = st.session_state.get("_auth_token", "")
         if token:
@@ -87,20 +93,33 @@ def _check_session_expiry():
 _WAKELOCK_JS = """
 <script>
 (function() {
-    let wakeLock = null;
+    var rootWindow = window.parent || window;
+    var wakeLock = null;
+
     async function requestWakeLock() {
         try {
             if ('wakeLock' in navigator) {
                 wakeLock = await navigator.wakeLock.request('screen');
-                wakeLock.addEventListener('release', () => { wakeLock = null; });
+                wakeLock.addEventListener('release', function() { wakeLock = null; });
             }
         } catch (e) {}
     }
-    document.addEventListener('visibilitychange', async () => {
-        if (document.visibilityState === 'visible' && wakeLock === null) {
-            await requestWakeLock();
+
+    // Re-acquire wake lock when page becomes visible (e.g. screen unlock)
+    document.addEventListener('visibilitychange', async function() {
+        if (document.visibilityState === 'visible') {
+            if (wakeLock === null) await requestWakeLock();
+            // Touch server to keep session alive after screen unlock
+            try { fetch(rootWindow.location.origin + '/_stcore/health', {method:'GET'}); } catch(e) {}
         }
     });
+
+    // Heartbeat: ping server every 2 minutes to prevent Streamlit Cloud sleep
+    // and keep the WebSocket connection alive during screen lock
+    setInterval(function() {
+        try { fetch(rootWindow.location.origin + '/_stcore/health', {method:'GET'}); } catch(e) {}
+    }, 120000);
+
     requestWakeLock();
 })();
 </script>
