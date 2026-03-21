@@ -27,7 +27,7 @@ def render_ai(user: dict[str, Any]) -> None:
 
 @st.cache_data(ttl=300)
 def _get_momentum_scalping_signals(market: str) -> pd.DataFrame:
-    columns = ["종목코드", "종목명", "현재가", "등락률(%)", "거래량비율", "RSI"]
+    columns = pd.Index(["종목코드", "종목명", "현재가", "등락률(%)", "거래량비율", "RSI"])
     today = datetime.now()
     frames: list[pd.DataFrame] = []
     cursor = today
@@ -115,10 +115,19 @@ def _render_screener() -> None:
                 filters["vol_ratio_min"] = vol_ratio_min
 
         filtered_df = pd.DataFrame(screen_stocks(raw_data, filters))
+        st.session_state["screener_result"] = {
+            "raw_count": len(raw_data),
+            "filtered_df": filtered_df,
+        }
+
+    screener_result = st.session_state.get("screener_result")
+    if isinstance(screener_result, dict):
+        filtered_df = screener_result.get("filtered_df", pd.DataFrame())
+        raw_count = int(screener_result.get("raw_count", 0))
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Scanned", len(raw_data))
+        c1.metric("Total Scanned", raw_count)
         c2.metric("Filtered Results", len(filtered_df))
-        c3.metric("Pass Rate", f"{len(filtered_df) / len(raw_data) * 100:.1f}%" if len(raw_data) else "0%")
+        c3.metric("Pass Rate", f"{len(filtered_df) / raw_count * 100:.1f}%" if raw_count else "0%")
         if filtered_df.empty:
             st.warning("No stocks matched the filters.")
         else:
@@ -174,7 +183,8 @@ def _render_prediction(user: dict[str, Any]) -> None:
     forecast_days = int(st.sidebar.slider("Forecast Days", 5, 90, 30, key="pred_days"))
 
     if st.sidebar.button("Run Prediction", type="primary", use_container_width=True, key="run_predict"):
-        df = fetch_stock(ticker, market, period)
+        clean_ticker = str(ticker or "").strip().upper() if market == "US" else str(ticker or "").strip()
+        df = fetch_stock(clean_ticker, market, period)
         if df.empty:
             st.error("Failed to fetch data.")
             return
@@ -183,21 +193,35 @@ def _render_prediction(user: dict[str, Any]) -> None:
         if "error" in ensemble:
             st.error(f"Prediction failed: {ensemble['error']}")
             return
+        st.session_state["ai_prediction_result"] = {
+            "ticker": clean_ticker,
+            "forecast_days": forecast_days,
+            "df": df,
+            "results": results,
+        }
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Current Price", f"{ensemble['last_price']:,.0f}")
-        c2.metric("Predicted Price", f"{ensemble['predicted_price']:,.0f}", f"{ensemble['predicted_return']:+.2f}%")
-        c3.metric("Models Used", len(ensemble.get("models_used", [])))
+    prediction_result = st.session_state.get("ai_prediction_result")
+    if isinstance(prediction_result, dict):
+        df = prediction_result.get("df", pd.DataFrame())
+        results = prediction_result.get("results", {})
+        ticker = str(prediction_result.get("ticker", ticker))
+        forecast_days = int(prediction_result.get("forecast_days", forecast_days))
+        ensemble = results.get("ensemble", {})
+        if isinstance(df, pd.DataFrame) and not df.empty and isinstance(ensemble, dict) and "error" not in ensemble:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Current Price", f"{ensemble['last_price']:,.0f}")
+            c2.metric("Predicted Price", f"{ensemble['predicted_price']:,.0f}", f"{ensemble['predicted_return']:+.2f}%")
+            c3.metric("Models Used", len(ensemble.get("models_used", [])))
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Historical", line=dict(color="#00D4AA", width=2)))
-        for model_name, pred in results.items():
-            if model_name == "ensemble" or "error" in pred or "forecast_index" not in pred:
-                continue
-            fig.add_trace(go.Scatter(x=pred["forecast_index"], y=pred["forecast"], name=model_name, line=dict(width=1, dash="dash")))
-        if "forecast" in ensemble:
-            forecast_index = pd.date_range(df.index[-1], periods=forecast_days + 1, freq="B")[1:]
-            fig.add_trace(go.Scatter(x=forecast_index, y=ensemble["forecast"], name="Ensemble", line=dict(color="#FFFFFF", width=3)))
-        fig.update_layout(height=600, title=f"{ticker} AI Price Forecast", xaxis_title="Date", yaxis_title="Price", template="plotly_dark", hovermode="x unified")
-        st.plotly_chart(fig, use_container_width=True)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Historical", line=dict(color="#00D4AA", width=2)))
+            for model_name, pred in results.items():
+                if model_name == "ensemble" or "error" in pred or "forecast_index" not in pred:
+                    continue
+                fig.add_trace(go.Scatter(x=pred["forecast_index"], y=pred["forecast"], name=model_name, line=dict(width=1, dash="dash")))
+            if "forecast" in ensemble:
+                forecast_index = pd.date_range(df.index[-1], periods=forecast_days + 1, freq="B")[1:]
+                fig.add_trace(go.Scatter(x=forecast_index, y=ensemble["forecast"], name="Ensemble", line=dict(color="#FFFFFF", width=3)))
+            fig.update_layout(height=600, title=f"{ticker} AI Price Forecast", xaxis_title="Date", yaxis_title="Price", template="plotly_dark", hovermode="x unified")
+            st.plotly_chart(fig, use_container_width=True)
     show_legal_disclaimer()

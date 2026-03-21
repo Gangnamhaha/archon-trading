@@ -11,13 +11,39 @@ from pykrx import stock as krx
 from datetime import datetime, timedelta
 
 
-def fetch_us_stock(ticker: str, period: str = "1y") -> pd.DataFrame:
+def _normalize_us_period_for_interval(period: str, interval: str) -> str:
+    """yfinance intraday 제한에 맞춰 period 보정"""
+    intraday_limits = {
+        "1m": "7d",
+        "2m": "60d",
+        "5m": "60d",
+        "15m": "60d",
+        "30m": "60d",
+        "60m": "730d",
+        "90m": "60d",
+        "1h": "730d",
+    }
+    if interval not in intraday_limits:
+        return period
+
+    order = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"]
+    max_period = intraday_limits[interval]
+    if period not in order or max_period not in order:
+        return max_period
+    return period if order.index(period) <= order.index(max_period) else max_period
+
+
+def fetch_us_stock(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
     import time
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            stock = yf.Ticker(ticker)
-            data = stock.history(period=period)
+            clean_ticker = str(ticker or "").strip().upper()
+            if not clean_ticker:
+                return pd.DataFrame()
+            effective_period = _normalize_us_period_for_interval(str(period or "1y"), str(interval or "1d"))
+            stock = yf.Ticker(clean_ticker)
+            data = stock.history(period=effective_period, interval=str(interval or "1d"))
             if data.empty:
                 if attempt < max_retries - 1:
                     time.sleep(1.5 * (attempt + 1))
@@ -80,10 +106,10 @@ def fetch_kr_stock(
 
 
 @lru_cache(maxsize=128)
-def fetch_stock(ticker: str, market: str = "US", period: str = "1y") -> pd.DataFrame:
+def fetch_stock(ticker: str, market: str = "US", period: str = "1y", interval: str = "1d") -> pd.DataFrame:
     """통합 주가 조회 함수"""
     if market.upper() == "US":
-        return fetch_us_stock(ticker, period)
+        return fetch_us_stock(ticker, period, interval)
     elif market.upper() == "KR":
         return fetch_kr_stock(ticker, period=period)
     else:

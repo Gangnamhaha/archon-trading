@@ -40,11 +40,20 @@ def render_news_tab(user: dict[str, Any]) -> None:
             news_df = news_df.head(_max_free_articles)
             st.warning(f"🔒 Free 플랜: 상위 {_max_free_articles}건만 표시됩니다. Plus 업그레이드 시 전체 조회 가능.")
 
+        st.session_state["news_analysis_result"] = {
+            "sentiment_summary": sentiment_summary,
+            "news_df": news_df,
+        }
+
+    news_result = st.session_state.get("news_analysis_result")
+    if isinstance(news_result, dict):
+        sentiment_summary = news_result.get("sentiment_summary", {})
+        news_df = news_result.get("news_df", pd.DataFrame())
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Market Mood", sentiment_summary["overall"])
-        col2.metric("Positive", f"{sentiment_summary['positive_pct']}%")
-        col3.metric("Negative", f"{sentiment_summary['negative_pct']}%")
-        col4.metric("Total Articles", sentiment_summary["total"])
+        col1.metric("Market Mood", sentiment_summary.get("overall", "N/A"))
+        col2.metric("Positive", f"{sentiment_summary.get('positive_pct', 0)}%")
+        col3.metric("Negative", f"{sentiment_summary.get('negative_pct', 0)}%")
+        col4.metric("Total Articles", sentiment_summary.get("total", 0))
 
         if not news_df.empty:
             import plotly.express as px

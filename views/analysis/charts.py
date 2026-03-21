@@ -45,14 +45,31 @@ def _render_data_analysis() -> None:
         interval = "1d"
         st.sidebar.info("🔒 차트 간격: 일봉만 (Plus 업그레이드 시 분봉/주봉 가능)")
     if st.sidebar.button("조회", type="primary", use_container_width=True, key="data_fetch"):
-        st.session_state.update({"data_ticker": ticker, "data_market": market_code, "data_period": period, "data_interval": interval})
+        clean_ticker = str(ticker or "").strip().upper() if market_code == "US" else str(ticker or "").strip()
+        st.session_state.update(
+            {
+                "data_ticker": clean_ticker,
+                "data_market_code": market_code,
+                "data_market": market,
+                "data_period": period,
+                "data_interval": interval,
+            }
+        )
     if "data_ticker" in st.session_state:
-        _show_price_and_compare(st.session_state["data_ticker"], st.session_state["data_market"], st.session_state["data_period"])
+        _show_price_and_compare(
+            st.session_state["data_ticker"],
+            st.session_state.get("data_market_code", str(st.session_state.get("data_market", "US")).split(" ")[0]),
+            st.session_state["data_period"],
+            st.session_state.get("data_interval", "1d"),
+        )
 
 
-def _show_price_and_compare(ticker: str, market_code: str, period: str) -> None:
+def _show_price_and_compare(ticker: str, market_code: str, period: str, interval: str) -> None:
+    if not str(ticker).strip():
+        st.warning("종목 코드를 입력하세요.")
+        return
     with st.spinner(f"{ticker} 데이터 로딩 중..."):
-        df = fetch_stock(ticker, market_code, period)
+        df = fetch_stock(ticker, market_code, period, interval)
     if df.empty:
         st.error(f"'{ticker}' 데이터를 가져올 수 없습니다.")
         return
@@ -221,12 +238,21 @@ def _render_technical_analysis() -> None:
             show_bb = show_bb and "BB" not in selected[max_free:]
             sma_periods = [p for p in sma_periods if f"SMA{p}" not in selected[max_free:]]
     if st.sidebar.button("분석 실행", type="primary", use_container_width=True, key="ta_run"):
-        st.session_state.update({"ta_ticker": ticker, "ta_market": market_code, "ta_period": period})
+        clean_ticker = str(ticker or "").strip().upper() if market_code == "US" else str(ticker or "").strip()
+        st.session_state.update(
+            {
+                "ta_ticker": clean_ticker,
+                "ta_market_code": market_code,
+                "ta_market": market,
+                "ta_period": period,
+            }
+        )
     if "ta_ticker" not in st.session_state:
         st.info("왼쪽 사이드바에서 종목을 입력하고 '분석 실행' 버튼을 클릭하세요.")
         return
 
-    df = fetch_stock(st.session_state["ta_ticker"], st.session_state["ta_market"], st.session_state["ta_period"])
+    ta_market_code = st.session_state.get("ta_market_code", str(st.session_state.get("ta_market", "US")).split(" ")[0])
+    df = fetch_stock(st.session_state["ta_ticker"], ta_market_code, st.session_state["ta_period"])
     if df.empty:
         st.error("데이터를 가져올 수 없습니다.")
         return
