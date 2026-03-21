@@ -90,13 +90,17 @@ def render_home():
     st.markdown(f"### Welcome, **{user['username']}** ({plan_emoji} {user_plan.upper()})")
 
     st.markdown("#### 오늘 시작 가이드")
+    _pm = st.session_state.get("_page_map", {})
     step_cols = st.columns(3)
     if step_cols[0].button("📊 1) 데이터 확인", use_container_width=True):
-        st.switch_page("render_analysis")
+        if "analysis" in _pm:
+            st.switch_page(_pm["analysis"])
     if step_cols[1].button("🏆 2) 종목 추천 받기", use_container_width=True):
-        st.switch_page("render_analysis")
+        if "analysis" in _pm:
+            st.switch_page(_pm["analysis"])
     if step_cols[2].button("⚡ 3) 자동매매 실행", use_container_width=True):
-        st.switch_page("render_trading")
+        if "trading" in _pm:
+            st.switch_page(_pm["trading"])
 
     st.markdown("#### Market Overview")
     picked_order = st.multiselect(
@@ -131,10 +135,10 @@ def render_home():
 
     st.markdown("#### Quick Access")
     qa_cols = st.columns(4)
-    _TRADING = "render_trading"
-    _ANALYSIS = "render_analysis"
-    _PORTFOLIO = "render_portfolio"
-    _SETTINGS = "render_settings"
+    _TRADING = _pm.get("trading")
+    _ANALYSIS = _pm.get("analysis")
+    _PORTFOLIO = _pm.get("portfolio")
+    _SETTINGS = _pm.get("settings")
 
     if user_is_pro:
         qa_items = [
@@ -157,9 +161,10 @@ def render_home():
             (_SETTINGS, "📩 고객문의"),
             (_SETTINGS, "💳 플랜 업그레이드"),
         ]
-    for col, (target_path, label) in zip(qa_cols, qa_items):
+    for col, (target_page, label) in zip(qa_cols, qa_items):
         if col.button(label, use_container_width=True):
-            st.switch_page(target_path)
+            if target_page is not None:
+                st.switch_page(target_page)
 
     st.markdown("#### 최근 활동")
     recent = get_recent_activity(username, limit=10)

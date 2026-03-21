@@ -20,6 +20,15 @@ portfolio_page = st.Page(render_portfolio, title="포트폴리오", icon="📁")
 settings_page = st.Page(render_settings, title="설정", icon="⚙️")
 admin_page = st.Page(render_admin_page, title="관리자", icon="🛠️")
 
+# Expose page objects for st.switch_page() usage in views
+st.session_state.setdefault("_page_map", {
+    "trading": trading_page,
+    "analysis": analysis_page,
+    "portfolio": portfolio_page,
+    "settings": settings_page,
+    "admin": admin_page,
+})
+
 pages = [home_page, trading_page, analysis_page, portfolio_page, settings_page, admin_page]
 pg = st.navigation(pages)
 pg.run()
