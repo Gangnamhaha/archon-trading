@@ -92,11 +92,11 @@ def render_home():
     st.markdown("#### 오늘 시작 가이드")
     step_cols = st.columns(3)
     if step_cols[0].button("📊 1) 데이터 확인", use_container_width=True):
-        st.switch_page("views/analysis/__init__.py")
+        st.switch_page("render_analysis")
     if step_cols[1].button("🏆 2) 종목 추천 받기", use_container_width=True):
-        st.switch_page("views/analysis/__init__.py")
+        st.switch_page("render_analysis")
     if step_cols[2].button("⚡ 3) 자동매매 실행", use_container_width=True):
-        st.switch_page("views/trading/__init__.py")
+        st.switch_page("render_trading")
 
     st.markdown("#### Market Overview")
     picked_order = st.multiselect(
@@ -131,10 +131,10 @@ def render_home():
 
     st.markdown("#### Quick Access")
     qa_cols = st.columns(4)
-    _TRADING = "views/trading/__init__.py"
-    _ANALYSIS = "views/analysis/__init__.py"
-    _PORTFOLIO = "views/portfolio.py"
-    _SETTINGS = "views/settings/__init__.py"
+    _TRADING = "render_trading"
+    _ANALYSIS = "render_analysis"
+    _PORTFOLIO = "render_portfolio"
+    _SETTINGS = "render_settings"
 
     if user_is_pro:
         qa_items = [
