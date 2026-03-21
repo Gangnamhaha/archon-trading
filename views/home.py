@@ -96,8 +96,8 @@ def render_home():
         if "analysis" in _pm:
             st.switch_page(_pm["analysis"])
     if step_cols[1].button("🏆 2) 종목 추천 받기", use_container_width=True):
-        if "analysis" in _pm:
-            st.switch_page(_pm["analysis"])
+        if "portfolio" in _pm:
+            st.switch_page(_pm["portfolio"])
     if step_cols[2].button("⚡ 3) 자동매매 실행", use_container_width=True):
         if "trading" in _pm:
             st.switch_page(_pm["trading"])
@@ -143,7 +143,7 @@ def render_home():
     if user_is_pro:
         qa_items = [
             (_TRADING, "⚡ 자동매매"),
-            (_ANALYSIS, "🏆 종목추천"),
+            (_PORTFOLIO, "🏆 종목추천"),
             (_ANALYSIS, "🤖 AI예측"),
             (_SETTINGS, "📣 마케팅도구"),
         ]
