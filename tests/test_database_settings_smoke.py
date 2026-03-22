@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from data import database
+from config.styles import load_user_preferences, save_user_preferences
 
 
 class DatabaseSettingsSmokeTests(unittest.TestCase):
@@ -208,6 +209,68 @@ class DatabaseSettingsSmokeTests(unittest.TestCase):
         self.assertIsNone(database.validate_session_token(t1))
         self.assertIsNotNone(database.validate_session_token(t2))
         self.assertIsNotNone(database.validate_session_token(t3))
+
+    def test_analysis_auto_rerun_preferences_round_trip(self):
+        username = "pref_user"
+        prefs = {
+            "last_section": "📈 차트분석",
+            "last_ticker": "AAPL",
+            "last_period": "1y",
+            "last_interval": "1d",
+            "last_market": "US",
+            "data_auto_rerun": True,
+            "ta_auto_rerun": False,
+            "pred_auto_rerun": True,
+        }
+
+        save_user_preferences(username, "analysis", prefs)
+        loaded = load_user_preferences(username, "analysis")
+
+        self.assertEqual(loaded.get("last_section"), "📈 차트분석")
+        self.assertEqual(loaded.get("last_ticker"), "AAPL")
+        self.assertIs(loaded.get("data_auto_rerun"), True)
+        self.assertIs(loaded.get("ta_auto_rerun"), False)
+        self.assertIs(loaded.get("pred_auto_rerun"), True)
+
+    def test_analysis_pref_merge_preserves_pred_auto_rerun_with_stale_snapshot(self):
+        username = "pref_stale_user"
+        save_user_preferences(
+            username,
+            "analysis",
+            {
+                "last_section": "🤖 AI판단",
+                "last_ticker": "AAPL",
+                "last_period": "1y",
+                "last_interval": "1d",
+                "last_market": "US",
+                "data_auto_rerun": False,
+                "ta_auto_rerun": False,
+                "pred_auto_rerun": False,
+            },
+        )
+
+        stale_saved = load_user_preferences(username, "analysis")
+
+        latest = load_user_preferences(username, "analysis")
+        latest["pred_auto_rerun"] = True
+        save_user_preferences(username, "analysis", latest)
+
+        current_pref = {
+            "last_section": "🤖 AI판단",
+            "last_ticker": "AAPL",
+            "last_period": "1y",
+            "last_interval": "1d",
+            "last_market": "US",
+            "data_auto_rerun": True,
+            "ta_auto_rerun": True,
+            "pred_auto_rerun": True,
+        }
+        merged_pref = dict(stale_saved)
+        merged_pref.update(current_pref)
+        save_user_preferences(username, "analysis", merged_pref)
+
+        loaded = load_user_preferences(username, "analysis")
+        self.assertIs(loaded.get("pred_auto_rerun"), True)
 
 
 if __name__ == "__main__":

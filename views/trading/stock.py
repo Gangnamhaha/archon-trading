@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -6,10 +5,11 @@ import streamlit as st
 
 from config.auth import is_paid, is_pro, require_auth
 from config.styles import inject_pro_css, load_user_preferences, save_user_preferences, show_legal_disclaimer
-from data.database import add_trade, get_autopilot_jobs, get_autopilot_logs, log_user_activity
+from data.database import get_autopilot_jobs, get_autopilot_logs, log_user_activity
 from trading.autopilot_engine import is_running, start_background_autopilot, stop_background_autopilot
 from trading.kis_api import KISApi, is_market_open, market_status_text
 from trading.kiwoom_api import KiwoomApi
+from views.trading._stock_manual_order import render_manual_order as render_stock_manual_order
 
 
 def _init_defaults(username: str) -> None:
@@ -70,11 +70,9 @@ def _save_stock_preferences(username: str, log_change: bool = False) -> None:
 
 def _render_broker_connect(username: str) -> None:
     st.subheader("증권사 API 연결")
-    saved = load_user_preferences(username, "broker_api")
-    if saved:
-        st.session_state.setdefault("broker_app_key", saved.get("app_key", ""))
-        st.session_state.setdefault("broker_secret", saved.get("app_secret", ""))
-        st.session_state.setdefault("broker_account", saved.get("account_no", ""))
+    st.session_state.setdefault("broker_app_key", "")
+    st.session_state.setdefault("broker_secret", "")
+    st.session_state.setdefault("broker_account", "")
 
     brokers = {"한국투자증권 (KIS)": "KIS", "키움증권": "KIWOOM"}
     labels = list(brokers.keys())
@@ -101,6 +99,14 @@ def _render_broker_connect(username: str) -> None:
     else:
         base_url = "https://openapi.koreainvestment.com:9443" if broker_code == "KIS" else "https://api.kiwoom.com"
 
+    target = (broker_code, mode, base_url)
+    connected_target = st.session_state.get("_stock_connected_target")
+    if st.session_state.get("broker_api") is not None and connected_target and connected_target != target:
+        st.session_state["broker_api"] = None
+        st.session_state["broker_name"] = ""
+        st.session_state["_stock_connected_target"] = None
+        st.warning("증권사/거래 모드가 변경되어 기존 연결을 해제했습니다. 안전을 위해 다시 API 연결을 진행해 주세요.")
+
     if st.button("API 연결", type="primary", use_container_width=True):
         if not (app_key and app_secret and account_no):
             st.error("모든 필드를 입력하세요.")
@@ -110,100 +116,19 @@ def _render_broker_connect(username: str) -> None:
             api.get_access_token()
             st.session_state["broker_api"] = api
             st.session_state["broker_name"] = broker_label
+            st.session_state["_stock_connected_target"] = target
             save_user_preferences(
                 username,
                 "broker_api",
                 {
                     "broker": broker_code,
-                    "app_key": app_key,
-                    "app_secret": app_secret,
-                    "account_no": account_no,
+                    "account_tail": account_no[-4:] if len(account_no) >= 4 else account_no,
                     "trading_mode": mode,
                 },
             )
             st.success(f"{broker_label} API 연결 성공 ({mode})")
         except Exception as e:
             st.error(f"연결 실패: {e}")
-
-
-def _render_manual_order() -> None:
-    api = st.session_state.get("broker_api")
-    if api is None:
-        st.info("수동 주문을 사용하려면 증권사 API를 연결하세요.")
-        return
-
-    status = api.get_status()
-    c1, c2, c3 = st.columns(3)
-    c1.metric("연결 상태", "연결됨" if status.get("has_token") else "미연결")
-    c2.metric("증권사", str(st.session_state.get("broker_name") or "-"))
-    c3.metric("계좌", str(status.get("account") or "-"))
-    st.caption(market_status_text())
-
-    if st.button("💰 잔고 조회", use_container_width=True, key="btn_balance"):
-        username = str(st.session_state.get("user", {}).get("username") or "")
-        if username:
-            log_user_activity(username, "balance_checked", "", "매매(국내주식)")
-        with st.spinner("잔고 조회 중..."):
-            bal = api.get_balance()
-        if "error" in bal:
-            st.error(f"잔고 조회 실패: {bal['error']}")
-        else:
-            b1, b2, b3, b4 = st.columns(4)
-            b1.metric("예수금", f"{int(bal.get('예수금', 0)):,}원")
-            b2.metric("총매입금액", f"{int(bal.get('총매입금액', 0)):,}원")
-            b3.metric("총평가금액", f"{int(bal.get('총평가금액', 0)):,}원")
-            pnl = int(bal.get("총평가손익", 0))
-            b4.metric("총평가손익", f"{pnl:+,}원", delta=f"{pnl:+,}")
-
-            holdings = bal.get("holdings", [])
-            if holdings:
-                st.markdown("##### 보유 종목")
-                st.dataframe(
-                    pd.DataFrame(holdings),
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "수익률": st.column_config.NumberColumn(format="%.2f%%"),
-                        "평가금액": st.column_config.NumberColumn(format="%d"),
-                        "평가손익": st.column_config.NumberColumn(format="%d"),
-                    },
-                )
-            else:
-                st.info("보유 종목이 없습니다.")
-
-    st.markdown("---")
-
-    def place(side: str, ticker: str, qty: int, price: float) -> None:
-        result = api.buy_order(ticker, qty, price) if side == "BUY" else api.sell_order(ticker, qty, price)
-        if result.get("status") == "success":
-            add_trade(ticker, "KR", side, price, qty, "수동 주문")
-            st.session_state["trade_log"].append(f"[{datetime.now().strftime('%H:%M:%S')}] {side} {ticker} x{qty}")
-            st.session_state["stock_last_ticker"] = ticker
-            st.session_state["stock_buy_ticker"] = ticker
-            st.session_state["stock_sell_ticker"] = ticker
-            username = str(st.session_state.get("user", {}).get("username") or "")
-            if username:
-                _save_stock_preferences(username, log_change=True)
-                log_user_activity(username, "order_placed", f"{side} {ticker} x{qty}", "매매(국내주식)")
-            st.success(f"{side} 주문 완료")
-        else:
-            st.error(str(result.get("error") or "주문 실패"))
-
-    left, right = st.columns(2)
-    with left:
-        st.markdown("**매수 주문**")
-        buy_code = st.text_input("매수 종목코드", placeholder="005930", key="stock_buy_ticker")
-        buy_qty = int(st.number_input("매수 수량", min_value=1, value=1, key="stock_buy_qty"))
-        buy_price = float(st.number_input("매수 가격 (0=시장가)", min_value=0, value=0, key="stock_buy_price"))
-        if st.button("매수 주문", key="stock_buy_btn", type="primary"):
-            place("BUY", buy_code, buy_qty, buy_price)
-    with right:
-        st.markdown("**매도 주문**")
-        sell_code = st.text_input("매도 종목코드", placeholder="005930", key="stock_sell_ticker")
-        sell_qty = int(st.number_input("매도 수량", min_value=1, value=1, key="stock_sell_qty"))
-        sell_price = float(st.number_input("매도 가격 (0=시장가)", min_value=0, value=0, key="stock_sell_price"))
-        if st.button("매도 주문", key="stock_sell_btn", type="primary"):
-            place("SELL", sell_code, sell_qty, sell_price)
 
 
 def _render_autopilot(username: str) -> None:
@@ -253,7 +178,24 @@ def _render_autopilot(username: str) -> None:
 
     jobs = get_autopilot_jobs(username)
     job = next((j for j in jobs if int(str(j.get("slot_idx", -1))) == 0), None)
-    running = is_running(username, 0) or bool(job and str(job.get("status", "")) == "running")
+    thread_running = is_running(username, 0)
+    db_running = bool(job and str(job.get("status", "")) == "running")
+    if db_running and not thread_running:
+        st.warning("오토파일럿 상태가 남아 있지만 백그라운드 스레드는 실행 중이 아닙니다. 상태 초기화를 권장합니다.")
+        if st.button("상태 초기화(중지)", key="ap_reset_stale", use_container_width=True):
+            try:
+                stop_background_autopilot(username, 0)
+                st.session_state["_ap_notice"] = {
+                    "level": "info",
+                    "message": "오토파일럿 상태를 초기화했습니다.",
+                }
+            except Exception as e:
+                st.session_state["_ap_notice"] = {
+                    "level": "error",
+                    "message": f"상태 초기화 실패: {e}",
+                }
+            st.rerun()
+    running = thread_running
     left, right = st.columns(2)
     with left:
         if not running and st.button("🚀 AP-1 시작", use_container_width=True, type="primary"):
@@ -349,7 +291,7 @@ def render_stock(user: dict[str, object]) -> None:
     with tab_order:
         _render_broker_connect(username)
         st.markdown("---")
-        _render_manual_order()
+        render_stock_manual_order(lambda log_change: _save_stock_preferences(username, log_change=log_change))
     with tab_auto:
         _render_autopilot(username)
 

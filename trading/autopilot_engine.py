@@ -5,6 +5,8 @@
 """
 import json
 import importlib
+import os
+import sys
 import threading
 from datetime import datetime, timedelta
 from typing import Any
@@ -44,6 +46,10 @@ def _run_slot(username: str, slot_idx: int, stop_event: threading.Event) -> None
     def log(msg: str, level: str = "info") -> None:
         add_autopilot_log(username, slot_idx, level, msg)
 
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
     log(f"🚀 AP-{slot_idx+1} 백그라운드 엔진 시작 ({datetime.now().strftime('%H:%M:%S')})")
 
     while not stop_event.is_set():
@@ -80,12 +86,11 @@ def _run_slot(username: str, slot_idx: int, stop_event: threading.Event) -> None
 
             if is_us:
                 try:
-                    import sys, os
-                    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                     recommend_us = importlib.import_module("pages.util_ap_us").recommend_us
                     sdf = recommend_us(mode=mode, max_stocks=max_stocks)
-                except ImportError:
+                except Exception as e:
                     sdf = None
+                    log(f"US 추천 모듈 오류: {e}", "error")
             else:
                 try:
                     if "공격" in mode:
@@ -159,6 +164,11 @@ def _run_slot(username: str, slot_idx: int, stop_event: threading.Event) -> None
                           f"AP-{slot_idx+1} 백그라운드 엔진 종료 ({datetime.now().strftime('%H:%M:%S')})")
     except Exception:
         pass
+
+    key = _engine_key(username, slot_idx)
+    with _ENGINE_LOCK:
+        _RUNNING_THREADS.pop(key, None)
+        _STOP_FLAGS.pop(key, None)
 
 
 def start_background_autopilot(username: str, slot_idx: int, **kwargs: Any) -> bool:

@@ -1,110 +1,164 @@
-from datetime import datetime, timedelta
+import importlib
 from typing import Any, cast
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
-from plotly.subplots import make_subplots
 
 from analysis.technical import calc_all_indicators, get_signal_summary
 from config.auth import is_paid
-from config.styles import show_legal_disclaimer
+from config.styles import load_user_preferences, save_user_preferences, show_legal_disclaimer
 from data.fetcher import fetch_stock, get_us_popular_stocks
 
 
+def _market_data_module() -> Any:
+    try:
+        return importlib.import_module("views.analysis._charts_market_data")
+    except ModuleNotFoundError as e:
+        st.error(f"분석 모듈 로드 실패: {e}")
+        return None
+
+
 def render_charts(user: dict[str, Any]) -> None:
-    _ = user
-    section = st.radio("하위 섹션", ["📈 데이터분석", "🌍 글로벌마켓", "📊 기술적분석"], horizontal=True)
+    section = st.radio("하위 섹션", ["📈 데이터분석", "🌍 글로벌마켓", "📊 기술적분석"], horizontal=True, key="charts_subsection")
     if section == "📈 데이터분석":
-        _render_data_analysis()
+        _render_data_analysis(user)
     elif section == "🌍 글로벌마켓":
         _render_global_market()
     else:
-        _render_technical_analysis()
+        _render_technical_analysis(user)
 
 
-def _render_data_analysis() -> None:
+def _persist_auto_toggle(username: str, key: str) -> None:
+    if not username:
+        return
+    pref = load_user_preferences(username, "analysis")
+    pref[key] = bool(st.session_state.get(key, False))
+    save_user_preferences(username, "analysis", pref)
+    snapshot = st.session_state.get("_analysis_pref_last")
+    if isinstance(snapshot, dict):
+        snapshot[key] = pref[key]
+        st.session_state["_analysis_pref_last"] = snapshot
+
+
+def _render_data_analysis(user: dict[str, Any]) -> None:
     st.subheader("📈 주가 데이터 분석")
     user_is_paid = is_paid()
+    username = str((user or {}).get("username") or "")
+
+    def _persist_data_toggle() -> None:
+        _persist_auto_toggle(username, "data_auto_rerun")
+
     market = str(st.sidebar.selectbox("시장 선택", ["US (미국)", "KR (한국)"], key="data_market") or "US (미국)")
     market_code = market.split(" ")[0]
+
+    if st.session_state.get("_prev_data_market") != market_code:
+        st.session_state["_prev_data_market"] = market_code
+        if market_code == "US":
+            st.session_state["data_ticker_input"] = "AAPL"
+        else:
+            st.session_state["data_ticker_code"] = "005930"
+        st.session_state.pop("data_ticker", None)
+        st.session_state.pop("data_market_code", None)
+        st.session_state.pop("data_run_period", None)
+        st.session_state.pop("data_run_interval", None)
+
     if market_code == "US":
         popular = get_us_popular_stocks()
-        selected = st.sidebar.selectbox("인기 종목", popular["ticker"].tolist(), index=0, key="data_popular")
-        if selected and st.session_state.get("_prev_data_popular") != selected:
-            st.session_state["data_ticker_input"] = selected
-            st.session_state["_prev_data_popular"] = selected
+        popular_tickers = popular["ticker"].tolist() if (not popular.empty and "ticker" in popular.columns) else []
+        if popular_tickers:
+            selected = st.sidebar.selectbox("인기 종목", popular_tickers, index=0, key="data_popular")
+            if selected and st.session_state.get("_prev_data_popular") != selected:
+                st.session_state["data_ticker_input"] = selected
+                st.session_state["_prev_data_popular"] = selected
+        else:
+            st.sidebar.warning("인기 종목 목록을 불러오지 못했습니다. 티커를 직접 입력하세요.")
         ticker = st.sidebar.text_input("종목 티커", key="data_ticker_input")
     else:
         ticker = st.sidebar.text_input("종목 코드", key="data_ticker_code")
     period = st.sidebar.selectbox("조회 기간", ["1mo", "3mo", "6mo", "1y", "2y", "5y"], index=3, key="data_period")
+    auto_fetch = bool(
+        st.sidebar.toggle(
+            "입력 변경 시 자동 조회",
+            value=bool(st.session_state.get("data_auto_rerun", st.session_state.get("_analysis_pref_last", {}).get("data_auto_rerun", False))),
+            key="data_auto_rerun",
+            on_change=_persist_data_toggle,
+        )
+    )
     if user_is_paid:
         interval = st.sidebar.selectbox("차트 간격", ["1d", "1wk", "1mo", "5m", "15m", "1h"], key="data_interval")
     else:
         interval = "1d"
         st.sidebar.info("🔒 차트 간격: 일봉만 (Plus 업그레이드 시 분봉/주봉 가능)")
+        st.session_state["data_run_interval"] = "1d"
+
+    current_ticker = str(ticker or "").strip().upper() if market_code == "US" else str(ticker or "").strip()
+    current_signature = {
+        "ticker": current_ticker,
+        "market": market_code,
+        "period": period,
+        "interval": interval,
+    }
+
     if st.sidebar.button("조회", type="primary", use_container_width=True, key="data_fetch"):
-        clean_ticker = str(ticker or "").strip().upper() if market_code == "US" else str(ticker or "").strip()
+        clean_ticker = current_ticker
+        # NOTE:
+        # data_market / data_period / data_interval are bound to sidebar widgets.
+        # Updating those widget keys after creation causes StreamlitAPIException.
         st.session_state.update(
             {
                 "data_ticker": clean_ticker,
                 "data_market_code": market_code,
-                "data_market": market,
-                "data_period": period,
-                "data_interval": interval,
+                "data_run_period": period,
+                "data_run_interval": interval,
             }
         )
+    if "data_ticker" not in st.session_state:
+        clean_ticker = current_ticker
+        if clean_ticker:
+            st.session_state.update(
+                {
+                    "data_ticker": clean_ticker,
+                    "data_market_code": market_code,
+                    "data_run_period": period,
+                    "data_run_interval": interval,
+                }
+            )
+        else:
+            st.info("왼쪽 사이드바에 종목을 입력하고 '조회' 버튼을 클릭하세요.")
+            return
+
     if "data_ticker" in st.session_state:
-        _show_price_and_compare(
+        run_signature = {
+            "ticker": str(st.session_state.get("data_ticker") or ""),
+            "market": str(st.session_state.get("data_market_code") or market_code),
+            "period": str(st.session_state.get("data_run_period") or period),
+            "interval": "1d" if not user_is_paid else str(st.session_state.get("data_run_interval") or st.session_state.get("data_interval") or "1d"),
+        }
+        if run_signature != current_signature:
+            if auto_fetch and current_ticker:
+                st.session_state.update(
+                    {
+                        "data_ticker": current_ticker,
+                        "data_market_code": market_code,
+                        "data_run_period": period,
+                        "data_run_interval": interval,
+                    }
+                )
+            else:
+                st.info("입력 조건이 변경되었습니다. 최신 차트를 보려면 '조회'를 다시 클릭하세요.")
+                return
+
+        module = _market_data_module()
+        if module is None:
+            return
+        module.render_price_and_compare(
             st.session_state["data_ticker"],
             st.session_state.get("data_market_code", str(st.session_state.get("data_market", "US")).split(" ")[0]),
-            st.session_state["data_period"],
-            st.session_state.get("data_interval", "1d"),
+            str(st.session_state.get("data_run_period") or st.session_state.get("data_period") or "1y"),
+            "1d" if not user_is_paid else str(st.session_state.get("data_run_interval") or st.session_state.get("data_interval") or "1d"),
         )
-
-
-def _show_price_and_compare(ticker: str, market_code: str, period: str, interval: str) -> None:
-    if not str(ticker).strip():
-        st.warning("종목 코드를 입력하세요.")
-        return
-    with st.spinner(f"{ticker} 데이터 로딩 중..."):
-        df = fetch_stock(ticker, market_code, period, interval)
-    if df.empty:
-        st.error(f"'{ticker}' 데이터를 가져올 수 없습니다.")
-        return
-
-    latest = float(df["Close"].iloc[-1])
-    prev = float(df["Close"].iloc[-2]) if len(df) > 1 else latest
-    change = latest - prev
-    change_pct = change / prev * 100 if prev else 0
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("현재가", f"{latest:,.0f}", f"{change:+,.0f} ({change_pct:+.2f}%)")
-    c2.metric("최고가", f"{df['High'].max():,.0f}")
-    c3.metric("최저가", f"{df['Low'].min():,.0f}")
-    c4.metric("평균 거래량", f"{df['Volume'].mean():,.0f}")
-    c5.metric("기간 수익률", f"{(df['Close'].iloc[-1] / df['Close'].iloc[0] - 1) * 100:.2f}%")
-
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], subplot_titles=["가격", "거래량"])
-    fig.add_trace(go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="가격"), row=1, col=1)
-    fig.add_trace(go.Bar(x=df.index, y=df["Volume"], marker_color=["red" if c >= o else "blue" for c, o in zip(df["Close"], df["Open"])]), row=2, col=1)
-    fig.update_layout(height=700, template="plotly_dark", xaxis_rangeslider_visible=False, showlegend=False, hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
-
-    st.subheader("다중 종목 수익률 비교")
-    compare_market = str(st.selectbox("비교 시장", ["US (미국)", "KR (한국)"], key="compare_market") or "US (미국)")
-    compare_code = compare_market.split(" ")[0]
-    defaults = "AAPL, MSFT, GOOGL, NVDA" if compare_code == "US" else "005930, 000660, 035720, 051910"
-    tickers = st.text_input("비교할 종목", value=defaults, key="compare_tickers_input")
-    compare_period = st.selectbox("비교 기간", ["1mo", "3mo", "6mo", "1y"], index=2, key="compare_period")
-    if st.button("수익률 비교", use_container_width=True, key="compare_returns"):
-        fig2 = go.Figure()
-        for t in [x.strip() for x in tickers.split(",") if x.strip()]:
-            d = fetch_stock(t, compare_code, compare_period)
-            if not d.empty:
-                fig2.add_trace(go.Scatter(x=d.index, y=(d["Close"] / d["Close"].iloc[0] - 1) * 100, name=t, mode="lines"))
-        fig2.update_layout(template="plotly_dark", height=500, title="종목별 수익률 비교 (%)", hovermode="x unified")
-        st.plotly_chart(fig2, use_container_width=True)
 
 
 def _render_global_market() -> None:
@@ -113,7 +167,10 @@ def _render_global_market() -> None:
 
     with tab1:
         if st.button("암호화폐 데이터 로드", type="primary", use_container_width=True, key="load_crypto"):
-            cdf = _fetch_crypto()
+            module = _market_data_module()
+            if module is None:
+                return
+            cdf = module.fetch_crypto_market_table()
             st.dataframe(cdf, use_container_width=True, hide_index=True) if not cdf.empty else st.error("데이터를 가져올 수 없습니다.")
         coin = st.selectbox("차트 보기", ["BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "BNB-USD"], key="crypto_chart_sel")
         cperiod = st.selectbox("기간", ["1mo", "3mo", "6mo", "1y"], key="crypto_period")
@@ -126,7 +183,10 @@ def _render_global_market() -> None:
 
     with tab2:
         if st.button("경제지표 로드", type="primary", use_container_width=True, key="load_econ"):
-            edf = _fetch_economic()
+            module = _market_data_module()
+            if module is None:
+                return
+            edf = module.fetch_economic_indicators()
             if edf.empty:
                 st.error("데이터를 가져올 수 없습니다.")
             else:
@@ -136,7 +196,10 @@ def _render_global_market() -> None:
 
     with tab3:
         if st.button("글로벌 지수 로드", type="primary", use_container_width=True, key="load_global"):
-            gdf = _fetch_indices()
+            module = _market_data_module()
+            if module is None:
+                return
+            gdf = module.fetch_global_indices()
             if gdf.empty:
                 st.error("데이터를 가져올 수 없습니다.")
             else:
@@ -146,7 +209,10 @@ def _render_global_market() -> None:
 
     with tab4:
         if st.button("투자자 동향 로드", type="primary", use_container_width=True, key="load_investor"):
-            idf = _fetch_investor_trend()
+            module = _market_data_module()
+            if module is None:
+                return
+            idf = module.fetch_investor_trend()
             if idf.empty:
                 st.error("데이터를 가져올 수 없습니다.")
             else:
@@ -154,70 +220,33 @@ def _render_global_market() -> None:
     show_legal_disclaimer()
 
 
-@st.cache_data(ttl=300)
-def _fetch_crypto() -> pd.DataFrame:
-    mapping = {"BTC-USD": "비트코인", "ETH-USD": "이더리움", "BNB-USD": "바이낸스코인", "SOL-USD": "솔라나", "XRP-USD": "리플"}
-    rows: list[dict[str, Any]] = []
-    for ticker, name in mapping.items():
-        hist = yf.Ticker(ticker).history(period="7d")
-        if hist.empty:
-            continue
-        curr = float(hist["Close"].iloc[-1]); prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else curr
-        rows.append({"코인": name, "티커": ticker.replace("-USD", ""), "현재가(USD)": round(curr, 2), "24h(%)": round((curr / prev - 1) * 100, 2)})
-    return pd.DataFrame(rows)
-
-
-@st.cache_data(ttl=600)
-def _fetch_economic() -> pd.DataFrame:
-    metrics = {"^TNX": ("미국 10년 국채금리", "%"), "DX-Y.NYB": ("달러 인덱스", ""), "USDKRW=X": ("USD/KRW 환율", "원"), "GC=F": ("금 (Gold)", "USD/oz")}
-    rows: list[dict[str, Any]] = []
-    for ticker, (name, unit) in metrics.items():
-        hist = yf.Ticker(ticker).history(period="5d")
-        if hist.empty:
-            continue
-        curr = float(hist["Close"].iloc[-1]); prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else curr
-        rows.append({"지표": name, "현재값": f"{curr:,.2f} {unit}", "전일비(%)": round((curr / prev - 1) * 100, 2)})
-    return pd.DataFrame(rows)
-
-
-@st.cache_data(ttl=300)
-def _fetch_indices() -> pd.DataFrame:
-    indices = {"^GSPC": "S&P 500", "^DJI": "다우존스", "^IXIC": "나스닥", "^KS11": "KOSPI"}
-    rows: list[dict[str, Any]] = []
-    for ticker, name in indices.items():
-        hist = yf.Ticker(ticker).history(period="5d")
-        if hist.empty:
-            continue
-        curr = float(hist["Close"].iloc[-1]); prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else curr
-        rows.append({"지수": name, "현재": f"{curr:,.2f}", "전일비(%)": round((curr / prev - 1) * 100, 2)})
-    return pd.DataFrame(rows)
-
-
-@st.cache_data(ttl=600)
-def _fetch_investor_trend() -> pd.DataFrame:
-    try:
-        from pykrx import stock as krx
-
-        today = datetime.now().strftime("%Y%m%d")
-        start = (datetime.now() - timedelta(days=30)).strftime("%Y%m%d")
-        df = krx.get_market_trading_value_by_date(start, today, "KOSPI")
-        if df.empty:
-            return pd.DataFrame()
-        df = df.reset_index()
-        df.columns = ["날짜"] + list(df.columns[1:])
-        return df.tail(20)
-    except Exception:
-        return pd.DataFrame()
-
-
-def _render_technical_analysis() -> None:
+def _render_technical_analysis(user: dict[str, Any]) -> None:
     st.subheader("📊 기술적 분석")
     user_is_paid = is_paid()
+    username = str((user or {}).get("username") or "")
+
+    def _persist_ta_toggle() -> None:
+        _persist_auto_toggle(username, "ta_auto_rerun")
+
     max_free = 5
     market = str(st.sidebar.selectbox("시장 선택", ["US (미국)", "KR (한국)"], key="ta_market") or "US (미국)")
     market_code = market.split(" ")[0]
+    if st.session_state.get("_prev_ta_market") != market_code:
+        st.session_state["_prev_ta_market"] = market_code
+        st.session_state["ta_ticker"] = "AAPL" if market_code == "US" else "005930"
+        st.session_state.pop("ta_run_ticker", None)
+        st.session_state.pop("ta_market_code", None)
+        st.session_state.pop("ta_run_period", None)
     ticker = st.sidebar.text_input("종목 티커" if market_code == "US" else "종목 코드", value="AAPL" if market_code == "US" else "005930", key="ta_ticker")
     period = st.sidebar.selectbox("조회 기간", ["3mo", "6mo", "1y", "2y"], index=2, key="ta_period")
+    auto_run = bool(
+        st.sidebar.toggle(
+            "입력 변경 시 자동 재분석",
+            value=bool(st.session_state.get("ta_auto_rerun", st.session_state.get("_analysis_pref_last", {}).get("ta_auto_rerun", False))),
+            key="ta_auto_rerun",
+            on_change=_persist_ta_toggle,
+        )
+    )
     show_sma = st.sidebar.checkbox("이동평균선 (SMA)", value=True, key="ta_show_sma")
     sma_periods = st.sidebar.multiselect("SMA 기간", [5, 10, 20, 60, 120], default=[5, 20, 60], key="ta_sma_periods")
     show_bb = st.sidebar.checkbox("볼린저밴드", value=True, key="ta_show_bb")
@@ -239,24 +268,67 @@ def _render_technical_analysis() -> None:
             sma_periods = [p for p in sma_periods if f"SMA{p}" not in selected[max_free:]]
     if st.sidebar.button("분석 실행", type="primary", use_container_width=True, key="ta_run"):
         clean_ticker = str(ticker or "").strip().upper() if market_code == "US" else str(ticker or "").strip()
+        # NOTE:
+        # ta_market / ta_ticker / ta_period are widget-bound keys.
+        # Persist run snapshots in separate keys to avoid Streamlit widget-state mutation errors.
         st.session_state.update(
             {
-                "ta_ticker": clean_ticker,
+                "ta_run_ticker": clean_ticker,
                 "ta_market_code": market_code,
-                "ta_market": market,
-                "ta_period": period,
+                "ta_run_period": period,
             }
         )
-    if "ta_ticker" not in st.session_state:
+
+    current_signature = {
+        "ticker": str(ticker or "").strip().upper() if market_code == "US" else str(ticker or "").strip(),
+        "market": market_code,
+        "period": period,
+    }
+
+    if "ta_run_ticker" not in st.session_state:
+        clean_ticker = str(ticker or "").strip().upper() if market_code == "US" else str(ticker or "").strip()
+        if clean_ticker:
+            st.session_state.update(
+                {
+                    "ta_run_ticker": clean_ticker,
+                    "ta_market_code": market_code,
+                    "ta_run_period": period,
+                }
+            )
+
+    if "ta_run_ticker" not in st.session_state:
         st.info("왼쪽 사이드바에서 종목을 입력하고 '분석 실행' 버튼을 클릭하세요.")
         return
 
+    run_signature = {
+        "ticker": str(st.session_state.get("ta_run_ticker") or ""),
+        "market": str(st.session_state.get("ta_market_code") or market_code),
+        "period": str(st.session_state.get("ta_run_period") or period),
+    }
+    if run_signature != current_signature:
+        if auto_run and current_signature["ticker"]:
+            st.session_state.update(
+                {
+                    "ta_run_ticker": current_signature["ticker"],
+                    "ta_market_code": market_code,
+                    "ta_run_period": period,
+                }
+            )
+        else:
+            st.info("입력 조건이 변경되었습니다. 최신 분석을 보려면 '분석 실행'을 다시 클릭하세요.")
+            return
+
     ta_market_code = st.session_state.get("ta_market_code", str(st.session_state.get("ta_market", "US")).split(" ")[0])
-    df = fetch_stock(st.session_state["ta_ticker"], ta_market_code, st.session_state["ta_period"])
+    run_ticker = str(st.session_state.get("ta_run_ticker") or st.session_state.get("ta_ticker") or ticker)
+    run_period = str(st.session_state.get("ta_run_period") or st.session_state.get("ta_period") or period)
+    df = fetch_stock(run_ticker, ta_market_code, run_period)
     if df.empty:
         st.error("데이터를 가져올 수 없습니다.")
         return
     ta = calc_all_indicators(df)
+    if ta.empty:
+        st.error("지표 계산 결과가 없습니다.")
+        return
     signal = get_signal_summary(ta)
     st.write(f"종합 시그널: **{signal['signal']}**")
     with st.expander("현재 지표 수치"):

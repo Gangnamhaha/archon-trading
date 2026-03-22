@@ -55,11 +55,13 @@ def render_news_tab(user: dict[str, Any]) -> None:
         col3.metric("Negative", f"{sentiment_summary.get('negative_pct', 0)}%")
         col4.metric("Total Articles", sentiment_summary.get("total", 0))
 
-        if not news_df.empty:
+        if not news_df.empty and "감성" in news_df.columns:
             import plotly.express as px
             sentiment_counts = news_df["감성"].value_counts()
             fig_pie = px.pie(values=sentiment_counts.values, names=sentiment_counts.index, title="Sentiment Distribution")
             st.plotly_chart(fig_pie, use_container_width=True)
+        elif not news_df.empty:
+            st.warning("감성 컬럼이 없어 분포 차트를 표시하지 못했습니다.")
         else:
             st.warning("No articles found.")
     else:
@@ -67,7 +69,8 @@ def render_news_tab(user: dict[str, Any]) -> None:
 
 
 def render_strategy_optimizer(initial_capital: int) -> None:
-    if "last_backtest_df" not in st.session_state:
+    if "last_backtest_df" not in st.session_state or not isinstance(st.session_state.get("last_backtest_df"), pd.DataFrame):
+        st.info("전략 최적화는 먼저 백테스팅을 1회 실행한 후 사용할 수 있습니다.")
         return
 
     with st.expander("🔧 전략 파라미터 자동 최적화", expanded=False):

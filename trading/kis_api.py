@@ -422,7 +422,7 @@ class KISApi:
         """API 연결 상태 확인"""
         return {
             "configured": self._is_configured(),
-            "mode": TRADING_MODE,
+            "mode": "실전" if self.is_live else "모의투자",
             "base_url": self.base_url,
             "has_token": self.access_token is not None,
             "account": self.account_no[:4] + "****" if self.account_no else "미설정",

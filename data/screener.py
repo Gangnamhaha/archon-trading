@@ -6,6 +6,7 @@
 import pandas as pd
 from pykrx import stock as krx
 from datetime import datetime, timedelta
+from typing import cast
 from analysis.technical import calc_rsi, calc_macd, calc_sma, calc_bollinger
 
 
@@ -31,13 +32,13 @@ def get_krx_market_data(market: str = "KOSPI", top_n: int = 100) -> pd.DataFrame
                     "종가": "Close", "거래량": "Volume"
                 })
 
-                close = ohlcv["Close"]
+                close = cast(pd.Series, ohlcv["Close"])
                 latest = close.iloc[-1]
 
                 # 기본 지표 계산
-                sma_5 = close.rolling(5).mean().iloc[-1]
-                sma_20 = close.rolling(20).mean().iloc[-1]
-                sma_60 = close.rolling(60).mean().iloc[-1] if len(close) >= 60 else None
+                sma_5 = cast(pd.Series, close.rolling(5).mean()).iloc[-1]
+                sma_20 = cast(pd.Series, close.rolling(20).mean()).iloc[-1]
+                sma_60 = cast(pd.Series, close.rolling(60).mean()).iloc[-1] if len(close) >= 60 else None
 
                 # RSI
                 rsi_df = calc_rsi(ohlcv)
@@ -119,12 +120,16 @@ def screen_stocks(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
         result = result[result["1일수익률(%)"] >= filters["return_1d_min"]]
     if "return_1d_max" in filters:
         result = result[result["1일수익률(%)"] <= filters["return_1d_max"]]
+    if "return_20d_min" in filters:
+        result = result[result["20일수익률(%)"] >= filters["return_20d_min"]]
+    if "return_20d_max" in filters:
+        result = result[result["20일수익률(%)"] <= filters["return_20d_max"]]
 
     # 거래량 비율 필터
     if "vol_ratio_min" in filters:
         result = result[result["거래량비율"] >= filters["vol_ratio_min"]]
 
-    return result.reset_index(drop=True)
+    return pd.DataFrame(result).reset_index(drop=True)
 
 
 # 프리셋 스크리너

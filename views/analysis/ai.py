@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,13 +10,13 @@ from analysis.ai_predict import predict_ensemble
 from analysis.recommender import recommend_aggressive_stocks, recommend_stocks
 from analysis.technical import calc_rsi
 from config.auth import is_pro
-from config.styles import require_plan, show_legal_disclaimer
+from config.styles import load_user_preferences, require_plan, save_user_preferences, show_legal_disclaimer
 from data.fetcher import fetch_stock
 from data.screener import PRESETS, get_krx_market_data, screen_stocks
 
 
 def render_ai(user: dict[str, Any]) -> None:
-    section = st.radio("하위 섹션", ["🔎 종목스크리너", "🏆 종목추천", "🤖 AI예측"], horizontal=True)
+    section = st.radio("하위 섹션", ["🔎 종목스크리너", "🏆 종목추천", "🤖 AI예측"], horizontal=True, key="ai_subsection")
     if section == "🔎 종목스크리너":
         _render_screener()
     elif section == "🏆 종목추천":
@@ -32,8 +32,12 @@ def _get_momentum_scalping_signals(market: str) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     cursor = today
     while len(frames) < 21:
-        daily = krx.get_market_ohlcv_by_ticker(cursor.strftime("%Y%m%d"), market=market)
-        if not daily.empty:
+        try:
+            daily = krx.get_market_ohlcv_by_ticker(cursor.strftime("%Y%m%d"), market=market)
+        except Exception:
+            daily = pd.DataFrame()
+        required = {"시가", "고가", "저가", "종가", "거래량"}
+        if not daily.empty and required.issubset(set(daily.columns.astype(str).tolist())):
             frames.append(daily)
         cursor -= timedelta(days=1)
         if (today - cursor).days > 45:
@@ -178,34 +182,105 @@ def _render_prediction(user: dict[str, Any]) -> None:
         return
 
     market = st.sidebar.selectbox("Market", ["US", "KR"], key="pred_market")
+    username = str((user or {}).get("username") or "")
+    if username:
+        saved_pred_auto = bool(load_user_preferences(username, "analysis").get("pred_auto_rerun", False))
+        st.session_state.setdefault("_pred_auto_saved", saved_pred_auto)
+
+    def _persist_pred_toggle() -> None:
+        if not username:
+            return
+        pref = load_user_preferences(username, "analysis")
+        pref["pred_auto_rerun"] = bool(st.session_state.get("pred_auto_rerun", False))
+        save_user_preferences(username, "analysis", pref)
+        st.session_state["_pred_auto_saved"] = pref["pred_auto_rerun"]
+
+    if st.session_state.get("_prev_pred_market") != market:
+        st.session_state["pred_ticker"] = "005930" if market == "KR" else "AAPL"
+        st.session_state["_prev_pred_market"] = market
+
     ticker = st.sidebar.text_input("Ticker", value="005930" if market == "KR" else "AAPL", key="pred_ticker")
     period = st.sidebar.selectbox("Training Period", ["6mo", "1y", "2y"], index=1, key="pred_period")
     forecast_days = int(st.sidebar.slider("Forecast Days", 5, 90, 30, key="pred_days"))
+    auto_predict = bool(
+        st.sidebar.toggle(
+            "입력 변경 시 자동 예측",
+            value=bool(st.session_state.get("pred_auto_rerun", st.session_state.get("_analysis_pref_last", {}).get("pred_auto_rerun", False))),
+            key="pred_auto_rerun",
+            on_change=_persist_pred_toggle,
+        )
+    )
+    current_signature = {
+        "market": market,
+        "ticker": str(ticker or "").strip().upper() if market == "US" else str(ticker or "").strip(),
+        "period": period,
+        "forecast_days": forecast_days,
+    }
 
-    if st.sidebar.button("Run Prediction", type="primary", use_container_width=True, key="run_predict"):
-        clean_ticker = str(ticker or "").strip().upper() if market == "US" else str(ticker or "").strip()
-        df = fetch_stock(clean_ticker, market, period)
+    def _run_prediction(clean_ticker: str, market_code: str, train_period: str, days: int) -> bool:
+        df = fetch_stock(clean_ticker, market_code, train_period)
         if df.empty:
             st.error("Failed to fetch data.")
-            return
-        results = predict_ensemble(df, forecast_days)
+            return False
+        results = predict_ensemble(df, days)
+        if not isinstance(results, dict):
+            st.error("Prediction failed: invalid model output")
+            return False
         ensemble = results.get("ensemble", {})
+        if not isinstance(ensemble, dict):
+            st.error("Prediction failed: invalid ensemble output")
+            return False
         if "error" in ensemble:
             st.error(f"Prediction failed: {ensemble['error']}")
-            return
+            return False
         st.session_state["ai_prediction_result"] = {
             "ticker": clean_ticker,
-            "forecast_days": forecast_days,
+            "forecast_days": days,
+            "market": market_code,
+            "period": train_period,
             "df": df,
             "results": results,
         }
+        return True
+
+    if st.sidebar.button("Run Prediction", type="primary", use_container_width=True, key="run_predict"):
+        clean_ticker = str(ticker or "").strip().upper() if market == "US" else str(ticker or "").strip()
+        _run_prediction(clean_ticker, market, period, forecast_days)
 
     prediction_result = st.session_state.get("ai_prediction_result")
     if isinstance(prediction_result, dict):
-        df = prediction_result.get("df", pd.DataFrame())
-        results = prediction_result.get("results", {})
-        ticker = str(prediction_result.get("ticker", ticker))
-        forecast_days = int(prediction_result.get("forecast_days", forecast_days))
+        previous_signature = {
+            "market": str(prediction_result.get("market") or ""),
+            "ticker": str(prediction_result.get("ticker") or ""),
+            "period": str(prediction_result.get("period") or ""),
+            "forecast_days": int(prediction_result.get("forecast_days", forecast_days)),
+        }
+        if previous_signature != current_signature:
+            if auto_predict and current_signature["ticker"]:
+                with st.spinner("입력 변경 감지: 예측 자동 재실행 중..."):
+                    reran = _run_prediction(
+                        str(current_signature["ticker"]),
+                        str(current_signature["market"]),
+                        str(current_signature["period"]),
+                        int(current_signature["forecast_days"]),
+                    )
+                if not reran:
+                    show_legal_disclaimer()
+                    return
+                prediction_result = st.session_state.get("ai_prediction_result")
+                if not isinstance(prediction_result, dict):
+                    show_legal_disclaimer()
+                    return
+            else:
+                st.info("입력 조건이 변경되었습니다. 최신 예측을 보려면 'Run Prediction'을 다시 실행하세요.")
+                show_legal_disclaimer()
+                return
+
+        current_result = cast(dict[str, Any], prediction_result)
+        df = current_result.get("df", pd.DataFrame())
+        results = current_result.get("results", {})
+        ticker = str(current_result.get("ticker", ticker))
+        forecast_days = int(current_result.get("forecast_days", forecast_days))
         ensemble = results.get("ensemble", {})
         if isinstance(df, pd.DataFrame) and not df.empty and isinstance(ensemble, dict) and "error" not in ensemble:
             c1, c2, c3 = st.columns(3)
@@ -216,7 +291,7 @@ def _render_prediction(user: dict[str, Any]) -> None:
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Historical", line=dict(color="#00D4AA", width=2)))
             for model_name, pred in results.items():
-                if model_name == "ensemble" or "error" in pred or "forecast_index" not in pred:
+                if model_name == "ensemble" or not isinstance(pred, dict) or "error" in pred or "forecast_index" not in pred:
                     continue
                 fig.add_trace(go.Scatter(x=pred["forecast_index"], y=pred["forecast"], name=model_name, line=dict(width=1, dash="dash")))
             if "forecast" in ensemble:
