@@ -28,57 +28,61 @@ def render_ai(user: dict[str, Any]) -> None:
 @st.cache_data(ttl=300)
 def _get_momentum_scalping_signals(market: str) -> pd.DataFrame:
     columns = pd.Index(["종목코드", "종목명", "현재가", "등락률(%)", "거래량비율", "RSI"])
-    today = datetime.now()
-    frames: list[pd.DataFrame] = []
-    cursor = today
-    while len(frames) < 21:
-        try:
-            daily = krx.get_market_ohlcv_by_ticker(cursor.strftime("%Y%m%d"), market=market)
-        except Exception:
-            daily = pd.DataFrame()
-        required = {"시가", "고가", "저가", "종가", "거래량"}
-        if not daily.empty and required.issubset(set(daily.columns.astype(str).tolist())):
-            frames.append(daily)
-        cursor -= timedelta(days=1)
-        if (today - cursor).days > 45:
-            break
-    if len(frames) < 2:
-        return pd.DataFrame(columns=columns)
+    try:
+        today = datetime.now()
+        frames: list[pd.DataFrame] = []
+        cursor = today
+        while len(frames) < 21:
+            try:
+                daily = krx.get_market_ohlcv_by_ticker(cursor.strftime("%Y%m%d"), market=market)
+            except Exception:
+                daily = pd.DataFrame()
+            required = {"시가", "고가", "저가", "종가", "거래량"}
+            if not daily.empty and required.issubset(set(daily.columns.astype(str).tolist())):
+                frames.append(daily)
+            cursor -= timedelta(days=1)
+            if (today - cursor).days > 45:
+                break
+        if len(frames) < 2:
+            return pd.DataFrame(columns=columns)
 
-    current = frames[0].copy()
-    avg_volume_obj = pd.concat([f["거래량"] for f in frames[1:]], axis=1).mean(axis=1)
-    if not isinstance(avg_volume_obj, pd.Series):
-        return pd.DataFrame(columns=columns)
-    avg_volume = avg_volume_obj.mask(avg_volume_obj == 0)
-    current["거래량비율"] = current["거래량"] / avg_volume
-    current["등락률(%)"] = (current["종가"] / current["시가"] - 1) * 100
-    candidates = current[(current["거래량비율"] > 3) & (current["등락률(%)"] > 2)].copy()
-    if candidates.empty:
-        return pd.DataFrame(columns=columns)
+        current = frames[0].copy()
+        avg_volume_obj = pd.concat([f["거래량"] for f in frames[1:]], axis=1).mean(axis=1)
+        if not isinstance(avg_volume_obj, pd.Series):
+            return pd.DataFrame(columns=columns)
+        avg_volume = avg_volume_obj.mask(avg_volume_obj == 0)
+        current["거래량비율"] = current["거래량"] / avg_volume
+        current["등락률(%)"] = (current["종가"] / current["시가"] - 1) * 100
+        candidates = current[(current["거래량비율"] > 3) & (current["등락률(%)"] > 2)].copy()
+        if candidates.empty:
+            return pd.DataFrame(columns=columns)
 
-    rows: list[dict[str, Any]] = []
-    start = (today - timedelta(days=120)).strftime("%Y%m%d")
-    end = today.strftime("%Y%m%d")
-    for ticker, row in candidates.iterrows():
-        try:
-            ohlcv = krx.get_market_ohlcv(start, end, ticker)
-            if ohlcv.empty or len(ohlcv) < 15:
+        rows: list[dict[str, Any]] = []
+        start = (today - timedelta(days=120)).strftime("%Y%m%d")
+        end = today.strftime("%Y%m%d")
+        for ticker, row in candidates.iterrows():
+            try:
+                ohlcv = krx.get_market_ohlcv(start, end, ticker)
+                if ohlcv.empty or len(ohlcv) < 15:
+                    continue
+                close_df: pd.DataFrame = ohlcv.rename(columns={"종가": "Close"}).loc[:, ["Close"]].copy()
+                rsi_val = calc_rsi(close_df)["RSI"].iloc[-1]
+                if pd.isna(rsi_val) or rsi_val >= 70:
+                    continue
+                rows.append({
+                    "종목코드": ticker,
+                    "종목명": krx.get_market_ticker_name(str(ticker)),
+                    "현재가": int(row["종가"]),
+                    "등락률(%)": round(float(row["등락률(%)"]), 2),
+                    "거래량비율": round(float(row["거래량비율"]), 2),
+                    "RSI": round(float(rsi_val), 2),
+                })
+            except Exception:
                 continue
-            close_df: pd.DataFrame = ohlcv.rename(columns={"종가": "Close"}).loc[:, ["Close"]].copy()
-            rsi_val = calc_rsi(close_df)["RSI"].iloc[-1]
-            if pd.isna(rsi_val) or rsi_val >= 70:
-                continue
-            rows.append({
-                "종목코드": ticker,
-                "종목명": krx.get_market_ticker_name(str(ticker)),
-                "현재가": int(row["종가"]),
-                "등락률(%)": round(float(row["등락률(%)"]), 2),
-                "거래량비율": round(float(row["거래량비율"]), 2),
-                "RSI": round(float(rsi_val), 2),
-            })
-        except Exception:
-            continue
-    return pd.DataFrame(rows).sort_values("등락률(%)", ascending=False).reset_index(drop=True) if rows else pd.DataFrame(columns=columns)
+        return pd.DataFrame(rows).sort_values("등락률(%)", ascending=False).reset_index(drop=True) if rows else pd.DataFrame(columns=columns)
+    except Exception as e:
+        print(f"[WARN] momentum signal generation skipped: {e}")
+        return pd.DataFrame(columns=columns)
 
 
 def _render_screener() -> None:
@@ -96,7 +100,11 @@ def _render_screener() -> None:
         st.sidebar.caption("🔒 Volume Ratio, Return Range, 모멘텀 시그널은 Pro 전용")
 
     if st.sidebar.button("Run Screener", type="primary", use_container_width=True, key="run_screener"):
-        raw_data = get_krx_market_data(market, top_n)
+        try:
+            raw_data = get_krx_market_data(market, top_n)
+        except Exception as e:
+            st.error(f"Failed to fetch market data: {e}")
+            return
         if raw_data.empty:
             st.error("Failed to fetch market data.")
             return
@@ -118,7 +126,11 @@ def _render_screener() -> None:
             if vol_ratio_min > 0:
                 filters["vol_ratio_min"] = vol_ratio_min
 
-        filtered_df = pd.DataFrame(screen_stocks(raw_data, filters))
+        try:
+            filtered_df = pd.DataFrame(screen_stocks(raw_data, filters))
+        except Exception as e:
+            st.error(f"Screener failed: {e}")
+            return
         st.session_state["screener_result"] = {
             "raw_count": len(raw_data),
             "filtered_df": filtered_df,
@@ -140,7 +152,11 @@ def _render_screener() -> None:
     st.markdown("---")
     st.caption("모멘텀 스캘핑 시그널")
     if user_is_pro:
-        mdf = _get_momentum_scalping_signals(market)
+        try:
+            mdf = _get_momentum_scalping_signals(market)
+        except Exception as e:
+            st.warning(f"모멘텀 시그널을 불러오지 못했습니다: {e}")
+            mdf = pd.DataFrame()
         st.dataframe(mdf, use_container_width=True, hide_index=True) if not mdf.empty else st.info("조건을 만족하는 종목이 없습니다.")
     else:
         st.caption("Pro 전용")

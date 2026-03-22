@@ -10,6 +10,9 @@ from typing import cast
 from analysis.technical import calc_rsi, calc_macd, calc_sma, calc_bollinger
 
 
+REQUIRED_KRX_OHLCV_COLUMNS = {"시가", "고가", "저가", "종가", "거래량"}
+
+
 def get_krx_market_data(market: str = "KOSPI", top_n: int = 100) -> pd.DataFrame:
     """KRX 시가총액 상위 종목 시장 데이터"""
     try:
@@ -25,6 +28,8 @@ def get_krx_market_data(market: str = "KOSPI", top_n: int = 100) -> pd.DataFrame
                 start = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
                 ohlcv = krx.get_market_ohlcv(start, today, ticker)
                 if ohlcv.empty or len(ohlcv) < 20:
+                    continue
+                if not REQUIRED_KRX_OHLCV_COLUMNS.issubset(set(ohlcv.columns.astype(str).tolist())):
                     continue
 
                 ohlcv = ohlcv.rename(columns={
