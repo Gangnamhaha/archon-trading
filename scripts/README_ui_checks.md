@@ -46,6 +46,7 @@ python scripts/run_checks.py --with-ui
 - `scripts/ui_check_data_analysis_blank_state.py` (data-analysis empty-input should show warning, not blank)
 - `scripts/ui_check_ai_recommendation_non_empty.py` (AI recommendation should return non-empty table)
 - `scripts/ui_check_login_navigation_persistence.py` (login should persist while switching pages)
+- `scripts/ui_check_relogin_state_restore.py` (state should restore after logout/login for same user)
 
 Useful flags:
 
@@ -141,4 +142,16 @@ Success output:
 
 ```text
 [PASS] Login session persisted across multi-page navigation.
+```
+
+## Direct run: relogin state restore check
+
+```bash
+python scripts/ui_check_relogin_state_restore.py
+```
+
+Success output:
+
+```text
+[PASS] State restored after logout/login for the same user.
 ```

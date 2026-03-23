@@ -2,6 +2,7 @@ import importlib
 import json
 import platform
 from datetime import datetime
+from typing import Any
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -13,6 +14,126 @@ _SESSION_TIMEOUT_OPTIONS = {
     "7일": 604800,
     "무제한": 0,
 }
+
+_GLOBAL_STATE_BLACKLIST = {
+    "authenticated",
+    "user",
+    "_login_time",
+    "_session_timeout",
+    "_auth_token",
+    "_last_session_touch",
+    "_last_activity_time",
+    "_active_sessions_cache",
+    "_active_sessions_cache_at",
+    "_active_sessions_cache_key",
+}
+
+_GLOBAL_STATE_ALLOWED_PREFIXES = (
+    "data_",
+    "ta_",
+    "pred_",
+    "scr_",
+    "rec_",
+    "risk_",
+    "mc_",
+    "ef_",
+    "lev_",
+    "news_",
+    "stock_",
+    "fx_",
+    "c_",
+    "wl_",
+    "ai_",
+)
+
+_GLOBAL_STATE_ALLOWED_EXPLICIT = {
+    "lang",
+    "charts_subsection",
+    "ai_subsection",
+    "analysis_section",
+    "settings_section",
+}
+
+
+def _is_json_compatible(value: Any) -> bool:
+    try:
+        encoded = json.dumps(value, ensure_ascii=False)
+        return len(encoded) <= 5000
+    except Exception:
+        return False
+
+
+def _should_persist_key(key: str) -> bool:
+    if not key or key in _GLOBAL_STATE_BLACKLIST:
+        return False
+    if key.startswith("_"):
+        return False
+    lowered = key.lower()
+    blocked_tokens = (
+        "password",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "jwt",
+        "bearer",
+        "oauth",
+        "csrf",
+        "cookie",
+        "sessionid",
+        "refresh",
+        "access_key",
+    )
+    if any(tok in lowered for tok in blocked_tokens):
+        return False
+    if key in _GLOBAL_STATE_ALLOWED_EXPLICIT:
+        return True
+    return key.startswith(_GLOBAL_STATE_ALLOWED_PREFIXES)
+
+
+def _collect_global_state_snapshot() -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in st.session_state.items():
+        if not isinstance(key, str) or not _should_persist_key(key):
+            continue
+        if _is_json_compatible(value):
+            payload[key] = value
+    return payload
+
+
+def _save_global_state_snapshot(username: str) -> None:
+    clean_username = str(username or "").strip()
+    if not clean_username:
+        return
+    snapshot = _collect_global_state_snapshot()
+    try:
+        from data.database import save_user_setting
+
+        save_user_setting(clean_username, "page_session_state", json.dumps(snapshot, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+def _restore_global_state_snapshot(username: str) -> None:
+    clean_username = str(username or "").strip()
+    if not clean_username:
+        return
+    restored_for = str(st.session_state.get("_global_state_restored_for") or "")
+    if restored_for == clean_username:
+        return
+    try:
+        from data.database import load_user_setting
+
+        raw = load_user_setting(clean_username, "page_session_state")
+        snapshot = json.loads(raw) if raw else {}
+    except Exception:
+        snapshot = {}
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    for key, value in snapshot.items():
+        if isinstance(key, str) and _should_persist_key(key) and key not in st.session_state:
+            st.session_state[key] = value
+    st.session_state["_global_state_restored_for"] = clean_username
 
 
 def _get_request_headers() -> dict[str, str]:
@@ -54,6 +175,8 @@ def _clear_auth_state():
         "_active_sessions_cache",
         "_active_sessions_cache_at",
         "_active_sessions_cache_key",
+        "_global_state_restored_for",
+        "_last_global_state_save",
     ]:
         st.session_state.pop(key, None)
 
@@ -250,6 +373,13 @@ def require_auth():
     if not st.session_state.get("authenticated", False):
         _show_login_form()
         st.stop()
+
+    current_user = st.session_state.get("user", {})
+    username = str((current_user or {}).get("username") or "")
+    _restore_global_state_snapshot(username)
+
+    _save_global_state_snapshot(username)
+
     token = st.session_state.get("_auth_token", "")
     if token:
         timeout_sec = int(str(st.session_state.get("_session_timeout", 86400)))
@@ -259,6 +389,10 @@ def require_auth():
 
 
 def logout():
+    current_user = st.session_state.get("user", {})
+    username = str((current_user or {}).get("username") or "")
+    _save_global_state_snapshot(username)
+
     token = st.session_state.get("_auth_token", "")
     if token:
         try:

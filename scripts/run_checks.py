@@ -55,6 +55,7 @@ def main() -> int:
             "scripts/ui_check_data_analysis_blank_state.py",
             "scripts/ui_check_ai_recommendation_non_empty.py",
             "scripts/ui_check_login_navigation_persistence.py",
+            "scripts/ui_check_relogin_state_restore.py",
             "scripts/run_checks.py",
         ]
         rc = _run([sys.executable, "-m", "compileall", *compile_targets], cwd=root)
@@ -90,6 +91,9 @@ def main() -> int:
             overall_ok = False
         rc_login_nav = _run([sys.executable, "scripts/ui_check_login_navigation_persistence.py"], cwd=root)
         if rc_login_nav != 0:
+            overall_ok = False
+        rc_relogin_restore = _run([sys.executable, "scripts/ui_check_relogin_state_restore.py"], cwd=root)
+        if rc_relogin_restore != 0:
             overall_ok = False
 
     if overall_ok:
