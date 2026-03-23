@@ -44,6 +44,8 @@ python scripts/run_checks.py --with-ui
 - `scripts/ui_check_analysis_full_subsections.py` (all analysis subsections full smoke)
 - `scripts/ui_check_analysis_user_switch_isolation.py` (user A/B session-state leakage check)
 - `scripts/ui_check_data_analysis_blank_state.py` (data-analysis empty-input should show warning, not blank)
+- `scripts/ui_check_ai_recommendation_non_empty.py` (AI recommendation should return non-empty table)
+- `scripts/ui_check_login_navigation_persistence.py` (login should persist while switching pages)
 
 Useful flags:
 
@@ -115,4 +117,28 @@ Success output starts with:
 
 ```text
 [PASS]
+```
+
+## Direct run: AI recommendation non-empty check
+
+```bash
+python scripts/ui_check_ai_recommendation_non_empty.py
+```
+
+Success output:
+
+```text
+[PASS] AI recommendation produced non-empty result in browser flow.
+```
+
+## Direct run: login navigation persistence check
+
+```bash
+python scripts/ui_check_login_navigation_persistence.py
+```
+
+Success output:
+
+```text
+[PASS] Login session persisted across multi-page navigation.
 ```

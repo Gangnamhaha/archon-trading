@@ -175,11 +175,32 @@ def _render_recommendations() -> None:
     scan_count = int(c2.selectbox("스캔 종목 수", [30, 50, 100, 200], index=2 if rec_mode == "🔥 공격적 추천" else 1, key="rec_scan") or 50)
     result_count = int(c3.selectbox("추천 표시 수", [10, 20, 30], index=1, key="rec_result_count") or 20)
 
+    def _run_recommend(mode: str, rec_market: str, scan_n: int, result_n: int) -> pd.DataFrame:
+        return (
+            recommend_aggressive_stocks(market=rec_market, top_n=scan_n, result_count=result_n)
+            if mode == "🔥 공격적 추천"
+            else recommend_stocks(market=rec_market, top_n=scan_n, result_count=result_n)
+        )
+
     if st.button("종목 추천 시작", type="primary", use_container_width=True, key="run_recommend"):
         with st.spinner("종목 추천 분석 중..."):
-            result = recommend_aggressive_stocks(market=market, top_n=scan_count, result_count=result_count) if rec_mode == "🔥 공격적 추천" else recommend_stocks(market=market, top_n=scan_count, result_count=result_count)
+            result = _run_recommend(rec_mode, market, scan_count, result_count)
+            fallback_note: str | None = None
+            if isinstance(result, pd.DataFrame) and result.empty:
+                expanded_scan = min(max(scan_count * 2, 100), 200)
+                result = _run_recommend(rec_mode, market, expanded_scan, result_count)
+                if not result.empty:
+                    fallback_note = f"추천 후보가 적어 스캔 범위를 {expanded_scan}개로 확장해 결과를 생성했습니다."
+                else:
+                    alt_market = "KOSDAQ" if market == "KOSPI" else "KOSPI"
+                    result = _run_recommend(rec_mode, alt_market, expanded_scan, result_count)
+                    if not result.empty:
+                        fallback_note = f"{market} 후보 부족으로 {alt_market} 시장에서 대체 추천을 표시합니다."
+
         st.session_state["recommend_result_key"] = "aggressive_result" if rec_mode == "🔥 공격적 추천" else "recommend_result"
         st.session_state[st.session_state["recommend_result_key"]] = result
+        if fallback_note:
+            st.info(fallback_note)
 
     result_key = st.session_state.get("recommend_result_key", "recommend_result")
     if result_key in st.session_state:
@@ -187,7 +208,7 @@ def _render_recommendations() -> None:
         if isinstance(df, pd.DataFrame) and not df.empty:
             st.dataframe(df, use_container_width=True, height=600)
         else:
-            st.warning("추천 결과가 없습니다.")
+            st.warning("추천 결과가 없습니다. 스캔 종목 수를 늘리거나 시장을 변경해 다시 실행해보세요.")
     show_legal_disclaimer()
 
 

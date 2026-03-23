@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from typing import Optional, Any, cast
 from pykrx import stock as krx
+import yfinance as yf
 from datetime import datetime, timedelta
 from functools import lru_cache
 from itertools import product
@@ -11,6 +12,48 @@ from analysis.technical import (
     calc_stochastic, calc_adx, calc_williams_r, get_signal_summary,
     calc_ichimoku, calc_obv,
 )
+
+
+def _get_recent_market_tickers(market: str, max_days_back: int = 10) -> list[str]:
+    market_key = (market or "KOSPI").upper()
+    today = datetime.now()
+    for offset in range(max_days_back + 1):
+        probe = (today - timedelta(days=offset)).strftime("%Y%m%d")
+        try:
+            tickers = [str(t) for t in krx.get_market_ticker_list(probe, market=market_key)]
+        except Exception:
+            tickers = []
+        if tickers:
+            return tickers
+    fallback = {
+        "KOSPI": ["005930", "000660", "035420", "051910", "005380", "068270", "105560", "012330"],
+        "KOSDAQ": ["247540", "086520", "196170", "263750", "293490", "067310", "278280", "041510"],
+    }
+    return list(fallback.get(market_key, []))
+
+
+def _empty_dataframe_with_columns(columns: list[str]) -> pd.DataFrame:
+    return pd.DataFrame({col: pd.Series(dtype=object) for col in columns})
+
+
+def _fetch_ohlcv_via_yfinance(ticker: str, days: int = 120) -> pd.DataFrame:
+    period_days = max(int(days), 120)
+    period = f"{period_days}d"
+    suffixes = [".KS", ".KQ"]
+    for suffix in suffixes:
+        try:
+            hist = yf.Ticker(f"{ticker}{suffix}").history(period=period, interval="1d")
+            if hist.empty:
+                continue
+            required = ["Open", "High", "Low", "Close", "Volume"]
+            if not set(required).issubset(set(hist.columns.astype(str).tolist())):
+                continue
+            out = hist[required].copy()
+            out.index.name = "Date"
+            return cast(pd.DataFrame, out)
+        except Exception:
+            continue
+    return pd.DataFrame()
 
 
 def _series_from_column(df: pd.DataFrame, column: str) -> pd.Series:
@@ -27,14 +70,23 @@ def _series_from_column(df: pd.DataFrame, column: str) -> pd.Series:
 def _fetch_ohlcv(ticker: str, days: int = 120) -> pd.DataFrame:
     today = datetime.now().strftime("%Y%m%d")
     start = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
-    ohlcv = krx.get_market_ohlcv(start, today, ticker)
+    try:
+        ohlcv = krx.get_market_ohlcv(start, today, ticker)
+    except Exception:
+        ohlcv = pd.DataFrame()
     if ohlcv.empty:
-        return pd.DataFrame()
+        return _fetch_ohlcv_via_yfinance(ticker, days=days)
+    required = {"시가", "고가", "저가", "종가", "거래량"}
+    if not required.issubset(set(ohlcv.columns.astype(str).tolist())):
+        return _fetch_ohlcv_via_yfinance(ticker, days=days)
     ohlcv = ohlcv.rename(columns={
         "시가": "Open", "고가": "High", "저가": "Low",
         "종가": "Close", "거래량": "Volume"
     })
-    return ohlcv
+    required_renamed = ["Open", "High", "Low", "Close", "Volume"]
+    if not set(required_renamed).issubset(set(ohlcv.columns.astype(str).tolist())):
+        return _fetch_ohlcv_via_yfinance(ticker, days=days)
+    return cast(pd.DataFrame, ohlcv[required_renamed].copy())
 
 
 def _calc_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -333,11 +385,11 @@ def recommend_for_portfolio(holdings_tickers: list[str], market: str = "KOSPI", 
             break
 
     if not market_tickers:
-        return pd.DataFrame(columns=result_columns)
+        return _empty_dataframe_with_columns(result_columns)
 
     candidates = [ticker for ticker in market_tickers if ticker not in holdings_set]
     if not candidates:
-        return pd.DataFrame(columns=result_columns)
+        return _empty_dataframe_with_columns(result_columns)
 
     candidate_pool = candidates
     holdings_returns = _holdings_returns_cache(clean_holdings, days=120) if has_holdings else {}
@@ -389,7 +441,7 @@ def recommend_for_portfolio(holdings_tickers: list[str], market: str = "KOSPI", 
             continue
 
     if not results:
-        return pd.DataFrame(columns=result_columns)
+        return _empty_dataframe_with_columns(result_columns)
 
     result_df = pd.DataFrame(results).sort_values("종합점수", ascending=False).head(target_count)
     result_df = pd.DataFrame(result_df.loc[:, result_columns]).reset_index(drop=True)
@@ -402,8 +454,9 @@ def recommend_stocks(
     top_n: int = 50,
     result_count: int = 20,
 ) -> pd.DataFrame:
-    today = datetime.now().strftime("%Y%m%d")
-    tickers = krx.get_market_ticker_list(today, market=market)[:top_n]
+    tickers = _get_recent_market_tickers(market)[:top_n]
+    if not tickers:
+        return pd.DataFrame()
 
     results = []
     for ticker in tickers:
@@ -488,10 +541,12 @@ def recommend_aggressive_stocks(
     top_n: int = 100,
     result_count: int = 20,
 ) -> pd.DataFrame:
-    today = datetime.now().strftime("%Y%m%d")
-    tickers = krx.get_market_ticker_list(today, market=market)[:top_n]
+    tickers = _get_recent_market_tickers(market)[:top_n]
+    if not tickers:
+        return pd.DataFrame()
 
     results = []
+    backup_results: list[dict[str, Any]] = []
     for ticker in tickers:
         try:
             name = krx.get_market_ticker_name(ticker)
@@ -536,9 +591,6 @@ def recommend_aggressive_stocks(
             total = vol_score * 0.25 + mom_score * 0.30 + vol_ratio_score * 0.25 + rsi_score * 0.20
             total = max(-50, min(100, total))
 
-            if total < 10:
-                continue
-
             max_gain_20 = float(returns.tail(20).max() * 100) if len(returns) >= 20 else 0
             max_loss_20 = float(returns.tail(20).min() * 100) if len(returns) >= 20 else 0
 
@@ -549,7 +601,7 @@ def recommend_aggressive_stocks(
             else:
                 risk_label = "🔥 위험"
 
-            results.append({
+            row_payload = {
                 "종목코드": ticker,
                 "종목명": name,
                 "현재가": int(close.iloc[-1]),
@@ -563,12 +615,23 @@ def recommend_aggressive_stocks(
                 "20일최대하락(%)": round(max_loss_20, 2),
                 "공격점수": round(total, 1),
                 "위험등급": risk_label,
-            })
+            }
+            backup_results.append(row_payload)
+
+            if total < 10:
+                continue
+
+            results.append(row_payload)
         except Exception:
             continue
 
     if not results:
-        return pd.DataFrame()
+        if not backup_results:
+            return pd.DataFrame()
+        backup_df = pd.DataFrame(backup_results).sort_values("공격점수", ascending=False).head(result_count)
+        backup_df = backup_df.reset_index(drop=True)
+        backup_df.index = backup_df.index + 1
+        return backup_df
 
     result_df = pd.DataFrame(results)
     result_df = result_df.sort_values("공격점수", ascending=False).head(result_count)

@@ -181,6 +181,8 @@ def _try_restore_session_from_token():
 
     if not token:
         token = st.query_params.get("_auth", "")
+        if isinstance(token, list):
+            token = token[0] if token else ""
 
     if not token:
         return False
@@ -193,6 +195,20 @@ def _try_restore_session_from_token():
         last_touch = st.session_state.get("_last_session_touch")
         user = validate_session_token(str(token))
         if not user:
+            # If current runtime session is already authenticated, avoid force logout
+            # on transient token validation issues during page transitions.
+            if st.session_state.get("authenticated") and st.session_state.get("user"):
+                runtime_token = str(st.session_state.get("_auth_token", "") or "")
+                if runtime_token and runtime_token != str(token):
+                    timeout_sec = int(str(st.session_state.get("_session_timeout", 86400) or 86400))
+                    _inject_localstorage_token(runtime_token, timeout_sec)
+                else:
+                    try:
+                        st.query_params.pop("_auth", None)
+                    except Exception:
+                        pass
+                    _clear_localstorage_token()
+                return False
             _clear_auth_state()
             _clear_localstorage_token()
             return False
@@ -221,9 +237,16 @@ def require_auth():
     _show_login_form = importlib.import_module("auth.ui")._show_login_form
 
     _run_parent_js(_LOCALSTORAGE_READER_JS)
-    restored = _try_restore_session_from_token()
-    if not restored:
+    has_runtime_auth = bool(st.session_state.get("authenticated") and st.session_state.get("user"))
+
+    restored = False
+    if not has_runtime_auth:
+        restored = _try_restore_session_from_token()
+        if not restored:
+            _check_session_expiry()
+    else:
         _check_session_expiry()
+
     if not st.session_state.get("authenticated", False):
         _show_login_form()
         st.stop()
