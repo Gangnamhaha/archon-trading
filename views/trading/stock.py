@@ -200,12 +200,6 @@ def _render_autopilot(username: str) -> None:
     with left:
         if not running and st.button("🚀 AP-1 시작", use_container_width=True, type="primary"):
             try:
-                if market == "US":
-                    st.session_state["_ap_notice"] = {
-                        "level": "warning",
-                        "message": "⚠️ US 오토파일럿은 현재 준비 중입니다. KR 시장을 선택해 주세요.",
-                    }
-                    st.rerun()
                 if market in {"KOSPI", "KOSDAQ"} and not is_market_open():
                     st.session_state["_ap_notice"] = {
                         "level": "warning",
@@ -226,7 +220,7 @@ def _render_autopilot(username: str) -> None:
                     usdkrw=usdkrw,
                 )
                 if started:
-                    log_user_activity(username, "autopilot_started", f"{market}/{mode}", "매매(국내주식)")
+                    log_user_activity(username, "autopilot_started", f"{market}/{mode}", "매매(국내/미국주식)")
                     st.session_state["_ap_notice"] = {
                         "level": "success",
                         "message": "🚀 AP-1 시작 요청 완료. 수 초 내 상태/로그가 갱신됩니다.",
@@ -246,7 +240,7 @@ def _render_autopilot(username: str) -> None:
         if running and st.button("🛑 AP-1 중지", use_container_width=True, type="primary"):
             try:
                 stop_background_autopilot(username, 0)
-                log_user_activity(username, "autopilot_stopped", "AP-1", "매매(국내주식)")
+                log_user_activity(username, "autopilot_stopped", "AP-1", "매매(국내/미국주식)")
                 st.session_state["_ap_notice"] = {
                     "level": "success",
                     "message": "🛑 AP-1 중지 요청 완료.",
