@@ -101,15 +101,29 @@ def _collect_global_state_snapshot() -> dict[str, Any]:
     return payload
 
 
-def _save_global_state_snapshot(username: str) -> None:
+def _snapshot_signature(snapshot: dict[str, Any]) -> str:
+    try:
+        return json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return ""
+
+
+def _save_global_state_snapshot(username: str, *, force: bool = False) -> None:
     clean_username = str(username or "").strip()
     if not clean_username:
         return
     snapshot = _collect_global_state_snapshot()
+    signature = _snapshot_signature(snapshot)
+    if not force and signature:
+        prev_signature = str(st.session_state.get("_last_global_state_snapshot_sig") or "")
+        if prev_signature == signature:
+            return
     try:
         from data.database import save_user_setting
 
         save_user_setting(clean_username, "page_session_state", json.dumps(snapshot, ensure_ascii=False))
+        if signature:
+            st.session_state["_last_global_state_snapshot_sig"] = signature
     except Exception:
         pass
 
@@ -130,6 +144,9 @@ def _restore_global_state_snapshot(username: str) -> None:
         snapshot = {}
     if not isinstance(snapshot, dict):
         snapshot = {}
+    signature = _snapshot_signature(snapshot)
+    if signature:
+        st.session_state["_last_global_state_snapshot_sig"] = signature
     for key, value in snapshot.items():
         if isinstance(key, str) and _should_persist_key(key) and key not in st.session_state:
             st.session_state[key] = value
@@ -177,6 +194,7 @@ def _clear_auth_state():
         "_active_sessions_cache_key",
         "_global_state_restored_for",
         "_last_global_state_save",
+        "_last_global_state_snapshot_sig",
     ]:
         st.session_state.pop(key, None)
 
@@ -391,7 +409,7 @@ def require_auth():
 def logout():
     current_user = st.session_state.get("user", {})
     username = str((current_user or {}).get("username") or "")
-    _save_global_state_snapshot(username)
+    _save_global_state_snapshot(username, force=True)
 
     token = st.session_state.get("_auth_token", "")
     if token:
