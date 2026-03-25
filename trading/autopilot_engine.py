@@ -103,6 +103,16 @@ def _run_slot(username: str, slot_idx: int, stop_event: threading.Event) -> None
                     sdf = None
                     log(f"스캔 실패: {e}", "error")
 
+            try:
+                if sdf is None:
+                    log(f"추천 결과 없음 | {market} | mode={mode}", "warn")
+                elif getattr(sdf, "empty", True):
+                    log(f"추천 결과 없음 | {market} | mode={mode}", "warn")
+                else:
+                    log(f"추천 결과 {len(sdf)}건 | {market} | mode={mode}")
+            except Exception:
+                pass
+
             if sdf is not None and not sdf.empty:
                 now_str = datetime.now().strftime("%H:%M:%S")
                 import pandas as pd

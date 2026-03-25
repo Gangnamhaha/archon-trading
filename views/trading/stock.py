@@ -196,6 +196,10 @@ def _render_autopilot(username: str) -> None:
                 }
             st.rerun()
     running = thread_running
+
+    if market == "US":
+        st.info("US 오토파일럿은 현재 거래 이력 기록(시뮬레이션) 기반으로 동작합니다. 실제 브로커 주문 연동은 KR 시장 중심으로 제공됩니다.")
+
     left, right = st.columns(2)
     with left:
         if not running and st.button("🚀 AP-1 시작", use_container_width=True, type="primary"):

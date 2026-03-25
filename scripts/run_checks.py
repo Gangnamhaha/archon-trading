@@ -56,6 +56,9 @@ def main() -> int:
             "scripts/ui_check_ai_recommendation_non_empty.py",
             "scripts/ui_check_login_navigation_persistence.py",
             "scripts/ui_check_relogin_state_restore.py",
+            "scripts/check_autopilot_us_engine.py",
+            "scripts/ui_check_trading_fx_crypto_smoke.py",
+            "scripts/ui_check_full_app_smoke.py",
             "scripts/run_checks.py",
         ]
         rc = _run([sys.executable, "-m", "compileall", *compile_targets], cwd=root)
