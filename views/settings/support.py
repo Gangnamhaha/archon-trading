@@ -139,7 +139,7 @@ def render_support(user: dict[str, str]):
 - **AI API**: AI 채팅 기능 사용 시 대화 내용이 선택한 AI 제공사(OpenAI/Anthropic/Google)에 전송됩니다.
 
 ### 보안 및 이용자 권리
-- **API 키 보안**: 증권사 API 키 및 AI API 키는 XOR+SHA256 기반 암호화를 적용하여 저장됩니다.
+- **API 키 보안**: 증권사 API 키 및 AI API 키는 Fernet(AES-128-CBC+HMAC) 대칭 암호화를 적용하여 저장됩니다.
 - **이용자 권리**: 이용자는 언제든지 자신의 개인정보 열람, 수정, 삭제를 요청할 수 있습니다.
 - **개인정보보호 책임자**: [관리자에게 문의]
                 """

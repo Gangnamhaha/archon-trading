@@ -15,6 +15,8 @@ from typing import Optional
 import time as _time
 import warnings
 
+from cryptography.fernet import Fernet, InvalidToken
+
 _rate_limits: dict[str, list[float]] = {}
 
 def _check_rate_limit(key: str, max_calls: int = 10, window: int = 60) -> bool:
@@ -40,20 +42,32 @@ if not _ARCHON_SECRET or _ARCHON_SECRET == "archon-default-key-change-me":
     _ARCHON_SECRET = "archon-default-key-change-me"
 
 _ENCRYPT_KEY = hashlib.sha256(_ARCHON_SECRET.encode()).digest()
+_FERNET_KEY = base64.urlsafe_b64encode(_ENCRYPT_KEY)
+_fernet = Fernet(_FERNET_KEY)
 
 _SENSITIVE_KEYS = ("api_key", "app_key", "app_secret", "secret_key")
 
-
-def _xor_encrypt(data: str) -> str:
-    raw = data.encode("utf-8")
-    encrypted = bytes(b ^ _ENCRYPT_KEY[i % len(_ENCRYPT_KEY)] for i, b in enumerate(raw))
-    return base64.b64encode(encrypted).decode("ascii")
+_FERNET_PREFIX = "fernet:"
 
 
-def _xor_decrypt(data: str) -> str:
+def _xor_decrypt_legacy(data: str) -> str:
+    """Legacy XOR decryption for migrating old data."""
     encrypted = base64.b64decode(data.encode("ascii"))
     decrypted = bytes(b ^ _ENCRYPT_KEY[i % len(_ENCRYPT_KEY)] for i, b in enumerate(encrypted))
     return decrypted.decode("utf-8")
+
+
+def _encrypt(data: str) -> str:
+    token = _fernet.encrypt(data.encode("utf-8"))
+    return _FERNET_PREFIX + token.decode("ascii")
+
+
+def _decrypt(data: str) -> str:
+    if data.startswith(_FERNET_PREFIX):
+        token = data[len(_FERNET_PREFIX):].encode("ascii")
+        return _fernet.decrypt(token).decode("utf-8")
+    # Legacy XOR data — decrypt and return (will be re-encrypted on next save)
+    return _xor_decrypt_legacy(data)
 
 
 def _is_sensitive(key: str) -> bool:
@@ -392,12 +406,16 @@ def init_db():
     conn.commit()
     conn.close()
 
+    # 마이그레이션 실행
+    from data.migrate import run_migrations
+    run_migrations(DB_PATH)
+
 
 # === 사용자 설정 저장/로드 ===
 
 def save_user_setting(username: str, key: str, value: str):
     init_db()
-    stored = _xor_encrypt(value) if _is_sensitive(key) and value else value
+    stored = _encrypt(value) if _is_sensitive(key) and value else value
     conn = get_connection()
     conn.execute(
         "INSERT OR REPLACE INTO user_settings (username, setting_key, setting_value, updated_at) "
@@ -422,7 +440,7 @@ def load_user_setting(username: str, key: str, default: Optional[str] = None):
     raw = row["setting_value"]
     if _is_sensitive(key) and raw:
         try:
-            return _xor_decrypt(raw)
+            return _decrypt(raw)
         except Exception:
             return raw
     return raw

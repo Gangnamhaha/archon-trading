@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import pandas as pd
+import pyotp
 import streamlit as st
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "portfolio.db")
@@ -73,20 +74,86 @@ def _init_users_table():
 
 _init_users_table()
 
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_LOCKOUT_SECONDS = 300  # 5분
+
+
+def _init_login_attempts_table():
+    conn = _get_conn()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            username TEXT NOT NULL,
+            attempted_at TEXT NOT NULL,
+            success INTEGER NOT NULL DEFAULT 0
+        )
+    """
+    )
+    conn.commit()
+    conn.close()
+
+
+_init_login_attempts_table()
+
+
+def _record_login_attempt(username: str, success: bool):
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO login_attempts (username, attempted_at, success) VALUES (?, ?, ?)",
+        (username, datetime.now().isoformat(), int(success)),
+    )
+    # 오래된 기록 정리 (24시간 이상)
+    cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
+    conn.execute("DELETE FROM login_attempts WHERE attempted_at < ?", (cutoff,))
+    conn.commit()
+    conn.close()
+
+
+def _clear_login_attempts(username: str):
+    conn = _get_conn()
+    conn.execute("DELETE FROM login_attempts WHERE username = ?", (username,))
+    conn.commit()
+    conn.close()
+
+
+def get_login_lockout_remaining(username: str) -> int:
+    """잠금 남은 시간(초)을 반환. 0이면 잠금 없음."""
+    conn = _get_conn()
+    cutoff = (datetime.now() - timedelta(seconds=LOGIN_LOCKOUT_SECONDS)).isoformat()
+    row = conn.execute(
+        "SELECT COUNT(*) as cnt, MAX(attempted_at) as last_at "
+        "FROM login_attempts WHERE username = ? AND attempted_at > ? AND success = 0",
+        (username, cutoff),
+    ).fetchone()
+    conn.close()
+    if row is None or row["cnt"] < MAX_LOGIN_ATTEMPTS:
+        return 0
+    last_at = datetime.fromisoformat(row["last_at"])
+    unlock_at = last_at + timedelta(seconds=LOGIN_LOCKOUT_SECONDS)
+    remaining = (unlock_at - datetime.now()).total_seconds()
+    return max(0, int(remaining))
+
 
 def _hash_password(password: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000).hex()
 
 
 def verify_user(username: str, password: str) -> Optional[dict[str, object]]:
+    lockout = get_login_lockout_remaining(username)
+    if lockout > 0:
+        return None
+
     conn = _get_conn()
     row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     conn.close()
     if row is None:
+        _record_login_attempt(username, False)
         return None
     pw_hash = _hash_password(password, row["salt"])
     if pw_hash != row["password_hash"]:
+        _record_login_attempt(username, False)
         return None
+    _clear_login_attempts(username)
     return {"id": row["id"], "username": row["username"], "role": row["role"], "plan": row["plan"]}
 
 
@@ -335,3 +402,80 @@ def require_paid():
         show_paid_prompt()
         st.stop()
     return user
+
+
+# --- 2FA (TOTP) ---
+
+def _init_totp_table():
+    conn = _get_conn()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_totp (
+            user_id INTEGER PRIMARY KEY,
+            secret TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+    )
+    conn.commit()
+    conn.close()
+
+
+_init_totp_table()
+
+
+def generate_totp_secret(user_id: int) -> str:
+    secret = pyotp.random_base32()
+    conn = _get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO admin_totp (user_id, secret, enabled) VALUES (?, ?, 0)",
+        (user_id, secret),
+    )
+    conn.commit()
+    conn.close()
+    return secret
+
+
+def enable_totp(user_id: int):
+    conn = _get_conn()
+    conn.execute("UPDATE admin_totp SET enabled = 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def disable_totp(user_id: int):
+    conn = _get_conn()
+    conn.execute("DELETE FROM admin_totp WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_totp_secret(user_id: int) -> Optional[str]:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT secret FROM admin_totp WHERE user_id = ? AND enabled = 1", (user_id,)
+    ).fetchone()
+    conn.close()
+    return row["secret"] if row else None
+
+
+def is_totp_enabled(user_id: int) -> bool:
+    return get_totp_secret(user_id) is not None
+
+
+def verify_totp(user_id: int, code: str) -> bool:
+    secret = get_totp_secret(user_id)
+    if not secret:
+        return True  # 2FA 미설정 시 통과
+    totp = pyotp.TOTP(secret)
+    return totp.verify(code, valid_window=1)
+
+
+def get_totp_provisioning_uri(user_id: int, username: str) -> Optional[str]:
+    conn = _get_conn()
+    row = conn.execute("SELECT secret FROM admin_totp WHERE user_id = ?", (user_id,)).fetchone()
+    conn.close()
+    if not row:
+        return None
+    return pyotp.TOTP(row["secret"]).provisioning_uri(name=username, issuer_name="Archon")

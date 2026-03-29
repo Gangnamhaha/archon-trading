@@ -5,6 +5,10 @@ import pandas as pd
 import streamlit as st
 
 from config.auth import change_password, create_user, delete_user, logout, update_user_plan, verify_user
+from auth.core import (
+    is_totp_enabled, generate_totp_secret, enable_totp, disable_totp, get_totp_provisioning_uri,
+    verify_totp,
+)
 from data.database import get_portfolio, get_trades
 from views.settings._admin_analytics import render_analytics_tab
 from views.settings._admin_errors import render_error_dashboard_tab
@@ -164,5 +168,45 @@ def render_account_tab(user: dict[str, object]) -> None:
                     change_password(int(cast(int, user["id"])), new_pw)
                     st.success("Password changed. Please re-login.")
                     logout()
+
+    st.markdown("---")
+    st.markdown("**2단계 인증 (2FA)**")
+    user_id = int(cast(int, user["id"]))
+    username = str(cast(str, user["username"]))
+
+    if is_totp_enabled(user_id):
+        st.success("2FA가 활성화되어 있습니다.")
+        if st.button("2FA 비활성화", type="secondary"):
+            disable_totp(user_id)
+            st.success("2FA가 비활성화되었습니다.")
+            st.rerun()
+    else:
+        if st.button("2FA 설정 시작"):
+            generate_totp_secret(user_id)
+            st.session_state["_2fa_setup"] = True
+            st.rerun()
+
+        if st.session_state.get("_2fa_setup"):
+            uri = get_totp_provisioning_uri(user_id, username)
+            if uri:
+                import qrcode
+                import io
+
+                qr = qrcode.make(uri)
+                buf = io.BytesIO()
+                qr.save(buf, format="PNG")
+                st.image(buf.getvalue(), caption="Google Authenticator 또는 인증 앱으로 스캔하세요", width=200)
+                st.code(uri, language=None)
+
+                with st.form("verify_2fa_setup"):
+                    code = st.text_input("인증 앱의 코드를 입력하여 확인", max_chars=6, placeholder="000000")
+                    if st.form_submit_button("2FA 활성화", type="primary"):
+                        if verify_totp(user_id, code):
+                            enable_totp(user_id)
+                            st.session_state.pop("_2fa_setup", None)
+                            st.success("2FA가 활성화되었습니다!")
+                            st.rerun()
+                        else:
+                            st.error("인증 코드가 올바르지 않습니다. 다시 시도하세요.")
 
 

@@ -4,11 +4,46 @@ from datetime import datetime
 import streamlit as st
 
 
+def _complete_login(user, timeout_sec, _SESSION_TIMEOUT_OPTIONS, _infer_client_meta):
+    """비밀번호(+2FA) 검증 완료 후 세션 설정 및 로그인 완료."""
+    st.session_state["authenticated"] = True
+    st.session_state["user"] = user
+    st.session_state["_login_time"] = datetime.now()
+    st.session_state["_session_timeout"] = timeout_sec
+    try:
+        from data.database import log_user_activity
+
+        log_user_activity(str(user["username"]), "login", "", "로그인")
+    except Exception:
+        pass
+    try:
+        from data.database import create_session_token, update_session_device_info
+
+        max_sessions = 1 if str(user.get("role", "")) == "admin" else 2
+        token = create_session_token(
+            username=str(user["username"]),
+            user_id=int(str(user["id"])),
+            role=str(user["role"]),
+            plan=str(user["plan"]),
+            session_timeout=timeout_sec,
+            max_sessions=max_sessions,
+        )
+        device_info, user_agent, ip_addr = _infer_client_meta()
+        update_session_device_info(token, device_info, user_agent, ip_addr)
+        st.session_state["_auth_token"] = token
+    except Exception:
+        pass
+    st.rerun()
+
+
 def _show_login_form():
     core_module = importlib.import_module("auth.core")
     session_module = importlib.import_module("auth.session")
     create_user = core_module.create_user
     verify_user = core_module.verify_user
+    get_login_lockout_remaining = core_module.get_login_lockout_remaining
+    is_totp_enabled = core_module.is_totp_enabled
+    verify_totp = core_module.verify_totp
     _SESSION_TIMEOUT_OPTIONS = session_module._SESSION_TIMEOUT_OPTIONS
     _infer_client_meta = session_module._infer_client_meta
 
@@ -95,6 +130,31 @@ def _show_login_form():
             )
         agree = st.checkbox("이용약관 및 개인정보처리방침에 동의합니다", key="login_agree")
 
+        # 2FA 검증 대기 상태
+        pending_2fa = st.session_state.get("_login_2fa_pending")
+        if pending_2fa:
+            st.info("2단계 인증이 필요합니다. 인증 앱의 코드를 입력하세요.")
+            with st.form("login_2fa_form"):
+                totp_code = st.text_input("인증 코드 (6자리)", max_chars=6, placeholder="000000")
+                col_verify, col_cancel = st.columns(2)
+                with col_verify:
+                    submitted_2fa = st.form_submit_button("인증", type="primary", use_container_width=True)
+                with col_cancel:
+                    cancel_2fa = st.form_submit_button("취소", use_container_width=True)
+
+            if submitted_2fa:
+                user = pending_2fa["user"]
+                timeout_sec = pending_2fa["timeout_sec"]
+                if verify_totp(int(str(user["id"])), totp_code):
+                    st.session_state.pop("_login_2fa_pending", None)
+                    _complete_login(user, timeout_sec, _SESSION_TIMEOUT_OPTIONS, _infer_client_meta)
+                else:
+                    st.error("인증 코드가 올바르지 않습니다.")
+            if cancel_2fa:
+                st.session_state.pop("_login_2fa_pending", None)
+                st.rerun()
+            return
+
         login_tab, signup_tab = st.tabs(["🔐 로그인", "📝 회원가입"])
 
         with login_tab:
@@ -113,39 +173,26 @@ def _show_login_form():
                     elif not username or not password:
                         st.error("아이디와 비밀번호를 입력하세요.")
                     else:
-                        user = verify_user(username, password)
-                        if user:
+                        lockout = get_login_lockout_remaining(username)
+                        if lockout > 0:
+                            minutes = lockout // 60
+                            seconds = lockout % 60
+                            st.error(f"🔒 로그인 시도 횟수 초과. {minutes}분 {seconds}초 후에 다시 시도하세요.")
+                        elif (user := verify_user(username, password)):
                             timeout_sec = _SESSION_TIMEOUT_OPTIONS[session_label]
-                            st.session_state["authenticated"] = True
-                            st.session_state["user"] = user
-                            st.session_state["_login_time"] = datetime.now()
-                            st.session_state["_session_timeout"] = timeout_sec
-                            try:
-                                from data.database import log_user_activity
-
-                                log_user_activity(str(user["username"]), "login", "", "로그인")
-                            except Exception:
-                                pass
-                            try:
-                                from data.database import create_session_token, update_session_device_info
-
-                                max_sessions = 1 if str(user.get("role", "")) == "admin" else 2
-                                token = create_session_token(
-                                    username=str(user["username"]),
-                                    user_id=int(str(user["id"])),
-                                    role=str(user["role"]),
-                                    plan=str(user["plan"]),
-                                    session_timeout=timeout_sec,
-                                    max_sessions=max_sessions,
-                                )
-                                device_info, user_agent, ip_addr = _infer_client_meta()
-                                update_session_device_info(token, device_info, user_agent, ip_addr)
-                                st.session_state["_auth_token"] = token
-                            except Exception:
-                                pass
-                            st.rerun()
+                            if str(user.get("role", "")) == "admin" and is_totp_enabled(int(str(user["id"]))):
+                                st.session_state["_login_2fa_pending"] = {"user": user, "timeout_sec": timeout_sec}
+                                st.rerun()
+                            else:
+                                _complete_login(user, timeout_sec, _SESSION_TIMEOUT_OPTIONS, _infer_client_meta)
                         else:
-                            st.error("아이디 또는 비밀번호가 틀렸습니다.")
+                            remaining_lockout = get_login_lockout_remaining(username)
+                            if remaining_lockout > 0:
+                                minutes = remaining_lockout // 60
+                                seconds = remaining_lockout % 60
+                                st.error(f"🔒 로그인 시도 횟수 초과. {minutes}분 {seconds}초 후에 다시 시도하세요.")
+                            else:
+                                st.error("아이디 또는 비밀번호가 틀렸습니다.")
 
         with signup_tab:
             with st.form("signup_form"):
